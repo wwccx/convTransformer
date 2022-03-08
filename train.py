@@ -131,7 +131,7 @@ class gqTrain:
             self.train()
             if i % 1 == 0:
                 accuracy = self.validate()
-                self.acc_value = np.append(self.acc_value, accuracy[0].cpu().detach().numpy()*0.95+accuracy[1].cpu().detach().numpy()*0.05)
+                self.acc_value = np.append(self.acc_value, accuracy.cpu().detach().numpy())
                 self.network.train()
                 self.save(self.currentEpoch, accuracy)
                 # self.lrScheduler.step()
