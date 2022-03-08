@@ -196,7 +196,7 @@ class convTransformer(nn.Module):
             self.layers.append(layer)
         self.avgpool = nn.AdaptiveAvgPool1d(1)
         self.head = nn.Linear(int(embed_dim * 2 ** (len(depths) - 1)), num_classes)
-        print(int(embed_dim * 2 ** (len(depths) - 1)))
+        # print(int(embed_dim * 2 ** (len(depths) - 1)))
 
     def forward(self, x):
         x = self.patch_embed(x)
@@ -204,7 +204,7 @@ class convTransformer(nn.Module):
             x = layer(x)
         x = self.avgpool(x.flatten(2))
         x = x.flatten(1)
-        print(x.shape)
+        # print(x.shape)
         x = self.head(x)
 
         return x
