@@ -35,7 +35,7 @@ class gqTrain:
                                   dataTransforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
                              )
                              ),
-            batch_size=4,
+            batch_size=32,
             shuffle=True
         )
         self.valDataLoader = torch.utils.data.DataLoader(
@@ -48,7 +48,7 @@ class gqTrain:
                                   dataTransforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
                              )
                              ),
-            batch_size=4,
+            batch_size=32,
             shuffle=True
         )
 

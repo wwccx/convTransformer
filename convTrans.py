@@ -1,10 +1,7 @@
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from pyinstrument import Profiler
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
-
-profiler = Profiler()
 
 
 class convLayers(nn.Module):
@@ -12,8 +9,8 @@ class convLayers(nn.Module):
         super().__init__()
         out_dim = in_dim or out_dim
         hidden_dim = hidden_dim or in_dim
-        self.conv1 = nn.Conv2d(in_dim, hidden_dim, kernel_size=(3, 3), padding=(1, 1), stride=(1, 1))
-        self.conv2 = nn.Conv2d(hidden_dim, out_dim, kernel_size=(3, 3), padding=(1, 1), stride=(1, 1))
+        self.conv1 = nn.Conv2d(in_dim, hidden_dim, kernel_size=(1, 1), padding=(0, 0), stride=(1, 1))
+        self.conv2 = nn.Conv2d(hidden_dim, out_dim, kernel_size=(1, 1), padding=(0, 0), stride=(1, 1))
         self.act = act_layer()
         self.drop = nn.Dropout2d(drop)
 
@@ -221,7 +218,7 @@ if __name__ == '__main__':
     # # summary(at, (96, 48, 48), batch_size=8)
     # b = at(a)
     # print(b.shape)
-    c = convTransformer(num_classes=10, embed_dim=96, window_size=7, depths=[2, 6, 2], num_heads=[6, 12, 24]).cuda()
+    c = convTransformer(num_classes=10, embed_dim=96, window_size=7, depths=[2, 2, 6, 2], num_heads=[3, 6, 12, 24]).cuda()
     a = torch.rand(1, 3, 256, 256).cuda()
     import time
 
