@@ -17,6 +17,7 @@ logging.basicConfig(level=logging.INFO)
 parser = argparse.ArgumentParser()
 parser.add_argument("--n_epochs", type=int, default=60, help="number of epochs of training")
 parser.add_argument("--batch_size", type=int, default=32, help="size of the batches")
+parser.add_argument("--log_frequency", type=int, default=10, help="log info per batches")
 opt = parser.parse_args()
 
 
@@ -68,7 +69,7 @@ class gqTrain:
         
         self.lossFun = torch.nn.CrossEntropyLoss()
 
-    def train(self, log_frequency=100):
+    def train(self, log_frequency=opt.log_frequency):
         self.network.train()
         batchIdx = 0
         t0 = time.time()
@@ -85,7 +86,7 @@ class gqTrain:
             loss.backward()
             self.optimizer.step()
 
-            if batchIdx % log_frequency == 0:
+            if (batchIdx + 1) % log_frequency == 0:
                 self.loss_value = np.append(self.loss_value, loss.item())
                 logging.info('Epoch:{}--{:.4f}%, loss:{:.6e}, batch time:{:.3f}s, epoch remain:{:.2f}min'
                              .format(self.currentEpoch, 100*batchIdx/len(self.trainDataLoader),
@@ -113,7 +114,7 @@ class gqTrain:
             total_pre += len(target)
             success_pre += torch.sum(judge_tensor)
 
-            if valBatchIdx % 20 == 0:
+            if (valBatchIdx + 1) % opt.log_frequency == 0:
                 logging.info('evalutating:{:.2f}%, success pre{:.3f}%'
                              .format(100*valBatchIdx/len(self.valDataLoader),
                                      success_pre/total_pre)
