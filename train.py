@@ -15,9 +15,10 @@ logging.basicConfig(level=logging.INFO)
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--n_epochs", type=int, default=200, help="number of epochs of training")
+parser.add_argument("--n_epochs", type=int, default=60, help="number of epochs of training")
 parser.add_argument("--batch_size", type=int, default=2, help="size of the batches")
 opt = parser.parse_args()
+
 
 class gqTrain:
     def __init__(self, dataDir='', saveDir='./train'):
@@ -152,7 +153,7 @@ if __name__ == '__main__':
     # gqTrain.network.load_state_dict(
     #     torch.load('/home/server/grasp/6t9only_attcg_shuffle_gqcnn22_02_23_20:12/19116t9only_simp_attcg_epoch34_pacc0.7045_nacc0.9925.pth')
     # )
-    gqTrain.run(start=0)
+    gqTrain.run(epoch=opt.n_epochs)
 
 
 
