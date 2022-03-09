@@ -209,6 +209,10 @@ class convTransformer(nn.Module):
 
         return x
 
+    @torch.jit.ignore
+    def no_weight_decay_keywords(self):
+        return {'relative_position_bias_table'}
+
 
 if __name__ == '__main__':
     from torchsummary import summary

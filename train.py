@@ -9,9 +9,15 @@ import time
 import torch.nn.functional as F
 from torchvision import datasets
 import torchvision.transforms as dataTransforms
-
+from optimizer import build_optimizer
+import argparse
 logging.basicConfig(level=logging.INFO)
 
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--n_epochs", type=int, default=200, help="number of epochs of training")
+parser.add_argument("--batch_size", type=int, default=2, help="size of the batches")
+opt = parser.parse_args()
 
 class gqTrain:
     def __init__(self, dataDir='', saveDir='./train'):
@@ -35,7 +41,7 @@ class gqTrain:
                                   dataTransforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
                              )
                              ),
-            batch_size=32,
+            batch_size=opt.batch_size,
             shuffle=True
         )
         self.valDataLoader = torch.utils.data.DataLoader(
@@ -48,14 +54,13 @@ class gqTrain:
                                   dataTransforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
                              )
                              ),
-            batch_size=32,
+            batch_size=opt.batch_size,
             shuffle=True
         )
 
         logging.info('data set loaded')
         self.network = convTransformer().to(self.device)
-        self.optimizer = torch.optim.AdamW(self.network.parameters(), eps=1e-8,
-                                           betas=(0.9, 0.999), lr=1e-3, weight_decay=0.0005)
+        self.optimizer = build_optimizer(self.network)
         self.currentEpoch = 0
         self.loss_value = np.array(0)
         self.acc_value = np.array(0)
