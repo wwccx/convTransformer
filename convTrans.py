@@ -25,16 +25,16 @@ class convLayers(nn.Module):
 
 
 class convAttention(nn.Module):
-    def __init__(self, win_size=(7, 7), dim=96, num_heads=3, attn_drop=0., convDotMul=None):
+    def __init__(self, win_size=(7, 7), dim=96, num_heads=3, attn_drop=0.):
         super(convAttention, self).__init__()
         self.num_heads = num_heads
         self.qkv = torch.nn.Conv2d(dim, dim * 3, kernel_size=(1, 1), stride=(1, 1), padding=(0, 0))
         self.window_size = win_size
-        if not convDotMul:
-            self.convDotMul = torch.nn.Conv2d(dim // num_heads * 2, win_size[0] * win_size[1], kernel_size=win_size,
-                                              stride=1, padding=(win_size[0] // 2, win_size[1] // 2))
-        else:
-            self.convDotMul = convDotMul
+        # if not convDotMul:
+        #     self.convDotMul = torch.nn.Conv2d(dim // num_heads * 2, win_size[0] * win_size[1], kernel_size=win_size,
+        #                                       stride=1, padding=(win_size[0] // 2, win_size[1] // 2), bias=False)
+        # else:
+        #     self.convDotMul = convDotMul
         self.softmax = nn.Softmax(dim=2)
         self.scale = (dim // num_heads) ** -0.5
 
@@ -43,7 +43,7 @@ class convAttention(nn.Module):
             torch.zeros((win_size[0] * win_size[1], num_heads))
         )  # 2*Wh-1 * 2*Ww-1, nH
 
-        self.v_padding = nn.ConstantPad2d((win_size[1] // 2, win_size[1] // 2, win_size[0] // 2, win_size[0] // 2), 0)
+        self.padding = nn.ConstantPad2d((win_size[1] // 2, win_size[1] // 2, win_size[0] // 2, win_size[0] // 2), 0)
 
         # TODO: position encoding and rewrite the for loop for v mat generation
 
@@ -56,20 +56,10 @@ class convAttention(nn.Module):
         B, C, H, W = x.shape
         qkv = self.qkv(x).reshape(B, 3, self.num_heads, C // self.num_heads, H, W).permute(1, 0, 2, 3, 4, 5)
         q, k, v = qkv[0], qkv[1], qkv[2]  # Batch, num_heads, dim//num_heads, H, W
-        attentionMap = self.convDotMul(
-            torch.cat(
-                (torch.flatten(q * self.scale, start_dim=0, end_dim=1), torch.flatten(k, start_dim=0, end_dim=1)), dim=1
-            )
-        ).view(B, self.num_heads, self.window_size[0] * self.window_size[1], H, W)  # Batch, num_heads, w*w, H, W
-
-        relative_position_bias = self.relative_position_bias_table.permute(1, 0).view(
-            1, self.num_heads, self.window_size[0] * self.window_size[1], 1, 1
-        )
-        attentionMap += relative_position_bias
-        attentionMap = self.softmax(attentionMap)
+        attentionMap = self.get_attn_map(q, k)
         # Batch, num_heads, w*w, H, W
 
-        v_padding = self.v_padding(
+        v_padding = self.padding(
             v.flatten(0, 1)
         )
         v_padding = v_padding.view(B, self.num_heads, C // self.num_heads,
@@ -89,19 +79,42 @@ class convAttention(nn.Module):
         x = self.proj_drop(x)
         return x
 
-    def get_vpadding_index(self, H, W, padding=2):
-        Hp = H + padding * 2
-        Wp = W + padding * 2
+    def get_attn_map(self, q, k):
+
+        assert q.shape == k.shape and len(q.shape) == 5, "input feature has wrong size"
+        B, num_heads, dim_per_head, H, W = q.shape
+        out_dim = self.window_size[0]*self.window_size[1]
+        k_padding = self.padding(
+            k.flatten(0, 1)
+        ).view(B, self.num_heads, dim_per_head,
+               H + self.window_size[0] - 1, W + self.window_size[1] - 1).unsqueeze(3)
+        # Batch, num_heads, dim//num_heads, 1, Hp, Wp
+        k = torch.cat(
+            [k_padding[:, :, :, :, i // self.window_size[0]:i // self.window_size[0] + H,
+             i % self.window_size[0]:i % self.window_size[0] + W]
+             for i in range(self.window_size[0] * self.window_size[1])
+             ], dim=3
+        )  # Batch, num_heads, dim//num_heads, w*w, Hp, Wp
+        attn_map = torch.mul(q.unsqueeze(3)*self.scale, k).sum(dim=2, keepdim=False)
+        # Batch, num_heads, w*w, Hp, Wp
+        relative_position_bias = self.relative_position_bias_table.permute(1, 0).view(
+            1, self.num_heads, self.window_size[0] * self.window_size[1], 1, 1
+        )
+        attn_map += relative_position_bias
+        attn_map = self.softmax(attn_map)
+
+        return attn_map
 
 
 class ConvTransBlock(nn.Module):
     def __init__(self, dim, num_heads, win_size=(7, 7), attn_drop=0., conv_drop=0., drop_path=0.,
-                 conv_dim_ratio=4, act_layer=nn.GELU, convDotMul=None):
+                 conv_dim_ratio=4, act_layer=nn.GELU,):
         super().__init__()
-        self.norm = nn.BatchNorm2d(dim)
+        self.norm1 = nn.LayerNorm(dim)
+        self.norm2 = nn.LayerNorm(dim)
         self.dim = dim
         self.convAttention = convAttention(dim=dim, num_heads=num_heads, win_size=win_size,
-                                           attn_drop=attn_drop, convDotMul=convDotMul)
+                                           attn_drop=attn_drop)
         self.convLayers = convLayers(dim, hidden_dim=int(dim * conv_dim_ratio), act_layer=act_layer, drop=conv_drop)
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
@@ -109,12 +122,15 @@ class ConvTransBlock(nn.Module):
         B, C, H, W = x.shape
         short_cut = x
         # print(self.dim, x.shape)
-        x = self.norm(x)
+        x = self.norm1(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
 
         x = self.convAttention(x)
 
         x = short_cut + self.drop_path(x)
-        x = x + self.drop_path(self.convLayers(x))
+
+        x = x + self.drop_path(self.convLayers(
+            self.norm2(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+        ))
 
         return x
 
@@ -149,11 +165,6 @@ class BasicLayer(nn.Module):
                            attn_drop=attn_drop,
                            conv_drop=conv_drop,
                            drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
-                           convDotMul=nn.Conv2d(dim // num_heads * 2,
-                                                win_size * win_size,
-                                                kernel_size=win_size,
-                                                stride=1,
-                                                padding=win_size // 2)
                            ) for i in range(depth)
         ])
         # if downsample is not None:
@@ -164,6 +175,18 @@ class BasicLayer(nn.Module):
             x = blk(x)
         if self.downsample is not None:
             x = self.downsample(x)
+        return x
+
+
+class PatchMerging(nn.Module):
+    def __init__(self, dim):
+        super(PatchMerging, self).__init__()
+        self.conv = nn.Conv2d(dim, dim*2, kernel_size=2, stride=2)
+        self.norm = nn.LayerNorm(dim)
+
+    def forward(self, x):
+        x = self.norm(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+        x = self.conv(x)
         return x
 
 
@@ -187,10 +210,7 @@ class convTransformer(nn.Module):
                                conv_drop=0,
                                attn_drop=0,
                                drop_path=dpr[sum(depths[:i]):sum(depths[:i + 1])],
-                               downsample=nn.Conv2d(int(embed_dim * 2 ** i),
-                                                    int(embed_dim * 2 ** i * 2),
-                                                    kernel_size=2,
-                                                    stride=2)
+                               downsample=PatchMerging(embed_dim * 2 ** i)
                                if i + 1 < len(depths) else None
                                )
             self.layers.append(layer)

@@ -46,6 +46,7 @@ class gqTrain:
             batch_size=opt.batch_size,
             shuffle=True
         )
+        torch.nn.CrossEntropyLoss
         self.valDataLoader = torch.utils.data.DataLoader(
             datasets.CIFAR10(root='./data/CIFAR10',
                              train=False,
@@ -110,14 +111,14 @@ class gqTrain:
             img = img.to(self.device)
             target_pre = self.network(img)
             target_pre = torch.argmax(target_pre, dim=1)
-            judge_tensor = (target_pre == target)
+            judge_tensor = torch.tensor(target_pre == target)
             total_pre += len(target)
             success_pre += torch.sum(judge_tensor)
 
             if (valBatchIdx + 1) % opt.log_frequency == 0:
                 logging.info('evalutating:{:.2f}%, success pre{:.3f}%'
                              .format(100*valBatchIdx/len(self.valDataLoader),
-                                     success_pre/total_pre)
+                                     100*success_pre/total_pre)
                              )
             valBatchIdx += 1
 
