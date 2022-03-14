@@ -5,17 +5,17 @@ import datetime
 import os
 import logging
 import time
-
 from optimizer import build_optimizer
 import argparse
 from torchsummary import summary
 from torchvision import models as models
 from load_dataset import build_dataset
+from lr_scheduler import build_scheduler
 logging.basicConfig(level=logging.INFO)
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--n_epochs", type=int, default=60, help="number of epochs of training")
+parser.add_argument("--n_epochs", type=int, default=300, help="number of epochs of training")
 parser.add_argument("--batch_size", type=int, default=32, help="size of the batches")
 parser.add_argument("--log_frequency", type=int, default=10, help="log info per batches")
 parser.add_argument("--model", type=str, default='convTrans', help="the trained model")
@@ -47,10 +47,12 @@ class gqTrain:
             self.network = models.resnet50(num_classes=10).to(self.device)
         summary(self.network, (3, 224, 224), batch_size=opt.batch_size)
         self.optimizer = build_optimizer(self.network)
+        self.num_step_per_epoch = len(self.trainDataLoader)
+        self.lr_scheduler = build_scheduler(opt, optimier=self.optimizer, n_iter_per_epoch=self.num_step_per_epoch)
         self.currentEpoch = 0
         self.loss_value = np.array(0)
         self.acc_value = np.array(0)
-        
+        self.maxAcc = 0
         self.lossFun = torch.nn.CrossEntropyLoss()
 
     def train(self, log_frequency=opt.log_frequency):
@@ -64,7 +66,7 @@ class gqTrain:
 
             loss = self.lossFun(target_pre, target)
             
-            # self.loss_value = np.append(self.loss_value, loss.item())
+            self.loss_value = np.append(self.loss_value, loss.item())
 
             self.optimizer.zero_grad()
             loss.backward()
@@ -73,14 +75,16 @@ class gqTrain:
             if (batchIdx + 1) % log_frequency == 0:
                 self.loss_value = np.append(self.loss_value, loss.item())
                 logging.info('Epoch:{}--{:.4f}%, loss:{:.6e}, batch time:{:.3f}s, epoch remain:{:.2f}min'
-                             .format(self.currentEpoch, 100*batchIdx/len(self.trainDataLoader),
+                             .format(self.currentEpoch, 100*batchIdx/self.num_step_per_epoch,
                                      loss.item(),
                                      (time.time()-t0)/log_frequency,
-                                     (time.time()-t0)/log_frequency*(len(self.trainDataLoader) - batchIdx)/60
+                                     (time.time()-t0)/log_frequency*(self.num_step_per_epoch - batchIdx)/60
                                      )
                              )
                 t0 = time.time()
+                np.save(os.path.join(self.saveDir, 'loss_value.npy'), self.loss_value)
             batchIdx += 1
+            self.lr_scheduler.step_update(self.currentEpoch * self.num_step_per_epoch + batchIdx)
 
     def validate(self):
         self.network.eval()
@@ -109,35 +113,40 @@ class gqTrain:
 
     def save(self, epoch, accuracy):
         dt = datetime.datetime.now().strftime('%H%M')
-        save_path = os.path.join(self.saveDir, dt + 'convTrans_epoch{}_acc{:.4f}.pth'.format(epoch, accuracy))
-        torch.save(self.network.state_dict(), save_path)
-        logging.info('save to '+save_path)
+        save_state = {
+            'model': self.network.state_dict(),
+            'optimizer': self.optimizer.state_dict(),
+            'lr_scheduler': self.lr_scheduler.state_dict(),
+            'epoch': self.currentEpoch,
+            'accuracy': accuracy
+        }
+        save_path = os.path.join(self.saveDir,
+                                 opt.model + opt.dataset + dt + 'state_epoch{}_acc{:.4f}.pth'.format(epoch, accuracy))
+        torch.save(save_state, save_path)
+        logging.info('save to ' + save_path)
 
-    def run(self, epoch=60, start=0):
+    def run(self, epoch=300, start=0):
         loss_value = np.array(0)
         acc_value = np.array(0)
-
+        self.currentEpoch = 0
         for i in range(start, epoch):
-            self.currentEpoch = i
             self.train()
-            if i % 1 == 0:
+            if i % 5 == 0:
                 accuracy = self.validate()
+                if accuracy > self.maxAcc:
+                    self.maxAcc = accuracy
+                    self.save(self.currentEpoch, accuracy)
                 self.acc_value = np.append(self.acc_value, accuracy.cpu().detach().numpy())
                 self.network.train()
-                self.save(self.currentEpoch, accuracy)
-                # self.lrScheduler.step()
                 for p in self.optimizer.param_groups:
                     logging.info('current lr:{}'.format(p['lr']))
-                np.save(os.path.join(self.saveDir, 'loss_value.npy'), self.loss_value)
                 np.save(os.path.join(self.saveDir, 'acc_value.npy'), self.acc_value)
             self.currentEpoch += 1
 
 
 if __name__ == '__main__':
     gqTrain = gqTrain()
-    # gqTrain.network.load_state_dict(
-    #     torch.load('/home/server/grasp/6t9only_attcg_shuffle_gqcnn22_02_23_20:12/19116t9only_simp_attcg_epoch34_pacc0.7045_nacc0.9925.pth')
-    # )
+
     gqTrain.run(epoch=opt.n_epochs)
 
 

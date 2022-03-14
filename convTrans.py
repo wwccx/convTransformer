@@ -191,12 +191,12 @@ class PatchMerging(nn.Module):
 
 
 class convTransformer(nn.Module):
-    def __init__(self, num_classes=10, embed_dim=96, depths=[2, 2, 6, 2], num_heads=[3, 6, 12, 24],
+    def __init__(self, in_chans=3, num_classes=10, embed_dim=96, depths=[2, 2, 6, 2], num_heads=[3, 6, 12, 24],
                  window_size=7, drop_path_rate=0.1, norm_layer=nn.LayerNorm):
         super().__init__()
         self.num_classes = num_classes
 
-        self.patch_embed = patchEmbedding(embed_dim=embed_dim, norm_layer=nn.BatchNorm2d)
+        self.patch_embed = patchEmbedding(in_chans=in_chans, embed_dim=embed_dim, norm_layer=nn.BatchNorm2d)
 
         self.layers = nn.ModuleList()
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]

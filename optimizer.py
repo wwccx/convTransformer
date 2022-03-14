@@ -22,7 +22,7 @@ def set_weight_decay(model, skip_keywords=()):
             continue  # frozen weights
         if len(param.shape) == 1 or name.endswith(".bias") or check_keywords_in_name(name, skip_keywords):
             no_decay.append(param)
-            print(f"{name} has no weight decay")
+            # print(f"{name} has no weight decay")
         else:
             has_decay.append(param)
     return [{'params': has_decay},

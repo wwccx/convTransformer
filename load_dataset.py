@@ -20,6 +20,9 @@ def build_dataset(name, batch_size, data_path, transform=None):
         dataset_dict['transform'] = transform
 
     if 'CIFAR' in name:
+        d = datasets.CIFAR10(**dataset_dict)
+
+
         t = D.DataLoader(
             datasets.CIFAR10(**dataset_dict),
             batch_size=batch_size,
@@ -48,3 +51,9 @@ def build_dataset(name, batch_size, data_path, transform=None):
         return t, v
     else:
         raise NotImplementedError('Only support MINST and CIFAR10')
+
+t, v = build_dataset(
+            name='CIFAR',
+            batch_size=32,
+            data_path='./data'
+        )
