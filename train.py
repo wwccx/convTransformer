@@ -20,20 +20,17 @@ parser.add_argument("--batch_size", type=int, default=32, help="size of the batc
 parser.add_argument("--log_frequency", type=int, default=10, help="log info per batches")
 parser.add_argument("--model", type=str, default='convTrans', help="the trained model")
 parser.add_argument("--dataset", type=str, default='CIFAR', help='the dataset')
+parser.add_argument("--check_point", type=str, default='')
 opt = parser.parse_args()
 
 
 class gqTrain:
-    def __init__(self, dataDir='', saveDir='./train'):
+    def __init__(self, dataDir='', saveDir='./train', check_point=opt.check_point):
 
         self.device = torch.device("cuda:0")
 
         self.dataDir = dataDir
-        self.saveDir = os.path.join(saveDir,
-                                    datetime.datetime.now().strftime(opt.model + '%y_%m_%d_%H:%M'))
-        logging.info('save path:'+self.saveDir)
 
-        os.makedirs(self.saveDir, exist_ok=True)
         self.trainDataLoader, self.valDataLoader = build_dataset(
             name=opt.dataset,
             batch_size=opt.batch_size,
@@ -54,6 +51,16 @@ class gqTrain:
         self.acc_value = np.array(0)
         self.maxAcc = 0
         self.lossFun = torch.nn.CrossEntropyLoss()
+
+        if check_point:
+            self.saveDir = check_point
+            logging.info('resuming path:' + self.saveDir)
+            self.load_check_point(check_point)
+        else:
+            self.saveDir = os.path.join(saveDir,
+                                        datetime.datetime.now().strftime(opt.model + '%y_%m_%d_%H:%M'))
+            logging.info('save path:'+self.saveDir)
+            os.makedirs(self.saveDir, exist_ok=True)
 
     def train(self, log_frequency=opt.log_frequency):
         self.network.train()
@@ -142,6 +149,29 @@ class gqTrain:
                     logging.info('current lr:{}'.format(p['lr']))
                 np.save(os.path.join(self.saveDir, 'acc_value.npy'), self.acc_value)
             self.currentEpoch += 1
+
+    def load_check_point(self, save_path):
+        logging.info('searching in ' + save_path)
+        check_points = os.listdir(save_path)
+        check_points = [ckpt for ckpt in check_points if ckpt.endswith('.pth')]
+        if len(check_points) > 0:
+            latest_ckpt = max([os.path.join(save_path, d) for d in check_points], key=os.path.getmtime)
+            logging.info('resuming from ' + latest_ckpt)
+        else:
+            latest_ckpt = None
+        if latest_ckpt:
+            check_point = torch.load(latest_ckpt)
+            self.network.load_state_dict(check_point['model'])
+            self.optimizer.load_state_dict(check_point['optimizer'])
+            self.lr_scheduler.load_state_dict(check_point['lr_scheduler'])
+            self.currentEpoch = check_point['epoch']
+            self.maxAcc = max(self.maxAcc, check_point['accuracy'])
+
+            self.acc_value = np.load(os.path.join(save_path, 'acc_value.npy'))
+            self.loss_value = np.load(os.path.join(save_path, 'loss_value.npy'))
+        else:
+            raise FileNotFoundError('No check points in the path!')
+
 
 
 if __name__ == '__main__':
