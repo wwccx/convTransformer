@@ -1,16 +1,16 @@
 import numpy as np
 import torch
 from convTrans import convTransformer
-import torch.utils.data as D
 import datetime
 import os
 import logging
 import time
-import torch.nn.functional as F
-from torchvision import datasets
-import torchvision.transforms as dataTransforms
+
 from optimizer import build_optimizer
 import argparse
+from torchsummary import summary
+from torchvision import models as models
+from load_dataset import build_dataset
 logging.basicConfig(level=logging.INFO)
 
 
@@ -18,6 +18,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--n_epochs", type=int, default=60, help="number of epochs of training")
 parser.add_argument("--batch_size", type=int, default=32, help="size of the batches")
 parser.add_argument("--log_frequency", type=int, default=10, help="log info per batches")
+parser.add_argument("--model", type=str, default='convTrans', help="the trained model")
+parser.add_argument("--dataset", type=str, default='CIFAR', help='the dataset')
 opt = parser.parse_args()
 
 
@@ -28,41 +30,22 @@ class gqTrain:
 
         self.dataDir = dataDir
         self.saveDir = os.path.join(saveDir,
-                                    datetime.datetime.now().strftime('convTrans%y_%m_%d_%H:%M'))
+                                    datetime.datetime.now().strftime(opt.model + '%y_%m_%d_%H:%M'))
         logging.info('save path:'+self.saveDir)
 
         os.makedirs(self.saveDir, exist_ok=True)
-
-        self.trainDataLoader = torch.utils.data.DataLoader(
-            datasets.CIFAR10(root='./data/CIFAR10',
-                             train=True,
-                             download=True,
-                             transform=dataTransforms.Compose(
-                                 [dataTransforms.Resize((224, 224)),
-                                  dataTransforms.ToTensor(),
-                                  dataTransforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
-                             )
-                             ),
+        self.trainDataLoader, self.valDataLoader = build_dataset(
+            name=opt.dataset,
             batch_size=opt.batch_size,
-            shuffle=True
-        )
-        torch.nn.CrossEntropyLoss
-        self.valDataLoader = torch.utils.data.DataLoader(
-            datasets.CIFAR10(root='./data/CIFAR10',
-                             train=False,
-                             download=True,
-                             transform=dataTransforms.Compose(
-                                 [dataTransforms.Resize((224, 224)),
-                                  dataTransforms.ToTensor(),
-                                  dataTransforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
-                             )
-                             ),
-            batch_size=opt.batch_size,
-            shuffle=True
+            data_path='./data'
         )
 
         logging.info('data set loaded')
-        self.network = convTransformer().to(self.device)
+        if 'convTrans' in opt.model:
+            self.network = convTransformer().to(self.device)
+        else:
+            self.network = models.resnet50(num_classes=10).to(self.device)
+        summary(self.network, (3, 224, 224), batch_size=opt.batch_size)
         self.optimizer = build_optimizer(self.network)
         self.currentEpoch = 0
         self.loss_value = np.array(0)
