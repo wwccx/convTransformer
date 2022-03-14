@@ -132,15 +132,13 @@ class gqTrain:
         torch.save(save_state, save_path)
         logging.info('save to ' + save_path)
 
-    def run(self, epoch=300, start=0):
-        loss_value = np.array(0)
-        acc_value = np.array(0)
-        self.currentEpoch = 0
-        for i in range(start, epoch):
+    def run(self, epoch=300):
+
+        for i in range(self.currentEpoch, epoch):
             self.train()
             if i % 5 == 0:
                 accuracy = self.validate()
-                if accuracy > self.maxAcc:
+                if accuracy > self.maxAcc or (i + 1) % 10 == 0:
                     self.maxAcc = accuracy
                     self.save(self.currentEpoch, accuracy)
                 self.acc_value = np.append(self.acc_value, accuracy.cpu().detach().numpy())
@@ -173,10 +171,8 @@ class gqTrain:
             raise FileNotFoundError('No check points in the path!')
 
 
-
 if __name__ == '__main__':
     gqTrain = gqTrain()
-
     gqTrain.run(epoch=opt.n_epochs)
 
 
