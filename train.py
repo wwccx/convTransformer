@@ -72,7 +72,6 @@ class gqTrain:
             target_pre = self.network(img)
 
             loss = self.lossFun(target_pre, target)
-            
             self.loss_value = np.append(self.loss_value, loss.item())
 
             self.optimizer.zero_grad()
@@ -162,13 +161,35 @@ class gqTrain:
             self.network.load_state_dict(check_point['model'])
             self.optimizer.load_state_dict(check_point['optimizer'])
             self.lr_scheduler.load_state_dict(check_point['lr_scheduler'])
-            self.currentEpoch = check_point['epoch']
+            self.currentEpoch = check_point['epoch'] + 1
             self.maxAcc = max(self.maxAcc, check_point['accuracy'])
 
             self.acc_value = np.load(os.path.join(save_path, 'acc_value.npy'))
             self.loss_value = np.load(os.path.join(save_path, 'loss_value.npy'))
         else:
             raise FileNotFoundError('No check points in the path!')
+
+    def test_train(self):
+        log_frequency = 10
+        self.network.train()
+        batchIdx = 0
+        t0 = time.time()
+
+        for img, target in self.trainDataLoader:
+            with torch.autograd.profiler.profile(enabled=True) as prof:
+                target = target.to(self.device)
+                img = img.to(self.device)
+                target_pre = self.network(img)
+
+                loss = self.lossFun(target_pre, target)
+
+                # self.loss_value = np.append(self.loss_value, loss.item())
+
+                self.optimizer.zero_grad()
+                loss.backward()
+                self.optimizer.step()
+            print(prof.key_averages().table(sort_by="self_cpu_time_total"))
+            break
 
 
 if __name__ == '__main__':

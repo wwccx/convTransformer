@@ -1,8 +1,13 @@
 import numpy as np
 from matplotlib import pyplot as plt
+import os
 
-loss = np.load('./train/resnet5022_03_13_15:09/loss_value.npy')
-acc = np.load('./train/resnet5022_03_13_15:09/acc_value.npy')
+out_path = './train'
+out_dict = os.listdir(out_path)
+training_dict = max([os.path.join(out_path, d) for d in out_dict], key=os.path.getmtime)
+
+loss = np.load(os.path.join(training_dict, 'loss_value.npy'))
+acc = np.load(os.path.join(training_dict, 'acc_value.npy'))
 
 
 def pooling(a, kernel_size=10):

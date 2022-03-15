@@ -54,27 +54,30 @@ class convAttention(nn.Module):
 
     def forward(self, x):
         B, C, H, W = x.shape
-        qkv = self.qkv(x).reshape(B, 3, self.num_heads, C // self.num_heads, H, W).permute(1, 0, 2, 3, 4, 5)
-        q, k, v = qkv[0], qkv[1], qkv[2]  # Batch, num_heads, dim//num_heads, H, W
-        attentionMap = self.get_attn_map(q, k)
-        # Batch, num_heads, w*w, H, W
-
-        v_padding = self.padding(
-            v.flatten(0, 1)
-        )
-        v_padding = v_padding.view(B, self.num_heads, C // self.num_heads,
-                                   H + self.window_size[0] - 1, W + self.window_size[1] - 1).unsqueeze(3)
-        # Batch, num_heads, dim//num_heads, 1, Hp, Wp
-
-        v = torch.cat(
-            [v_padding[:, :, :, :, i // self.window_size[0]:i // self.window_size[0] + H,
+        q, kv = torch.split(self.qkv(x), [C, 2*C], dim=1)
+        # q: B C H W kv: B 2C H W
+        kv = self.padding(kv).unsqueeze(2)
+        # kv: B 2C 1 H W
+        kv = torch.cat(
+            [kv[..., i // self.window_size[0]:i // self.window_size[0] + H,
              i % self.window_size[0]:i % self.window_size[0] + W]
              for i in range(self.window_size[0] * self.window_size[1])
-             ], dim=3
+             ], dim=2
         )
+        k, v = torch.split(kv, C, dim=1)  # B C w*w H W
 
-        x = torch.sum(v * attentionMap.unsqueeze(2), dim=3).reshape(B, C, H, W)
-        # print(torch.max(x - v.reshape(B, C, H, W)))
+        attn_map = torch.mul(q.unsqueeze(2) * self.scale,
+                             k).reshape(B, self.num_heads, C//self.num_heads,
+                                        self.window_size[0]*self.window_size[1], H, W).sum(dim=2, keepdim=False)
+        # Batch, num_heads, w*w, Hp, Wp
+        relative_position_bias = self.relative_position_bias_table.permute(1, 0).view(
+            1, self.num_heads, self.window_size[0] * self.window_size[1], 1, 1
+        )
+        attn_map += relative_position_bias
+        attn_map = self.softmax(attn_map)
+        x = torch.sum(v.reshape(B, self.num_heads, C//self.num_heads, self.window_size[0]*self.window_size[1],
+                                H, W) * attn_map.unsqueeze(2), dim=3).reshape(B, C, H, W)
+
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
@@ -237,11 +240,11 @@ class convTransformer(nn.Module):
 if __name__ == '__main__':
     from torchsummary import summary
 
-    # at = ConvTransBlock(dim=96, num_heads=3).cuda()
-    # a = torch.rand(32, 96, 24, 24).cuda()
-    # # summary(at, (96, 48, 48), batch_size=8)
-    # b = at(a)
-    # print(b.shape)
+    at = ConvTransBlock(dim=96, num_heads=3).cuda()
+    a = torch.rand(32, 96, 24, 24).cuda()
+    # summary(at, (96, 48, 48), batch_size=8)
+    b = at(a)
+    print(b.shape)
     c = convTransformer(num_classes=10, embed_dim=96, window_size=7, depths=[2, 2, 6, 2], num_heads=[3, 6, 12, 24]).cuda()
     a = torch.rand(1, 3, 256, 256).cuda()
     import time
@@ -250,3 +253,6 @@ if __name__ == '__main__':
     b = c(a)
     print(time.time() - t)
     summary(c, (3, 224, 224), batch_size=8)
+
+
+
