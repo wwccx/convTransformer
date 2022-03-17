@@ -39,7 +39,7 @@ class gqTrain:
 
         logging.info('data set loaded')
         if 'convTrans' in opt.model:
-            self.network = convTransformer().to(self.device)
+            self.network = convTransformer(B=opt.batch_size).to(self.device)
         else:
             self.network = models.resnet50(num_classes=10).to(self.device)
         summary(self.network, (3, 224, 224), batch_size=opt.batch_size)
@@ -176,15 +176,30 @@ class gqTrain:
         t0 = time.time()
 
         for img, target in self.trainDataLoader:
-            with torch.autograd.profiler.profile(enabled=True) as prof:
+            # with torchprof.Profile(self.network, use_cuda=True) as prof:
+            #     target = target.to(self.device)
+            #     img = img.to(self.device)
+            #     t = time.time()
+            #     target_pre = self.network(img)
+            #     # torch.cuda.synchronize()
+            #     print(time.time() - t)
+            #     loss = self.lossFun(target_pre, target)
+            #     # self.loss_value = np.append(self.loss_value, loss.item())
+            #     self.optimizer.zero_grad()
+            #     loss.backward()
+            #     self.optimizer.step()
+            # print(prof.display(show_events=True))
+            # break
+            with torch.autograd.profiler.profile(enabled=True, use_cuda=True) as prof:
                 target = target.to(self.device)
                 img = img.to(self.device)
+                t = time.time()
                 target_pre = self.network(img)
+                torch.cuda.synchronize()
+                print(time.time() - t)
 
                 loss = self.lossFun(target_pre, target)
-
                 # self.loss_value = np.append(self.loss_value, loss.item())
-
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
@@ -195,7 +210,7 @@ class gqTrain:
 if __name__ == '__main__':
     gqTrain = gqTrain()
     gqTrain.run(epoch=opt.n_epochs)
-
+    # gqTrain.test_train()
 
 
 

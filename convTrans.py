@@ -25,8 +25,9 @@ class convLayers(nn.Module):
 
 
 class convAttention(nn.Module):
-    def __init__(self, win_size=(7, 7), dim=96, num_heads=3, attn_drop=0.):
+    def __init__(self, win_size=(7, 7), dim=96, num_heads=3, attn_drop=0., default_shape=(32, 24, 24)):  # B H W
         super(convAttention, self).__init__()
+        self.dim = dim
         self.num_heads = num_heads
         self.qkv = torch.nn.Conv2d(dim, dim * 3, kernel_size=(1, 1), stride=(1, 1), padding=(0, 0))
         self.window_size = win_size
@@ -50,21 +51,46 @@ class convAttention(nn.Module):
         self.proj = torch.nn.Conv2d(dim, dim, kernel_size=(1, 1), stride=(1, 1), padding=(0, 0))
         self.proj_drop = torch.nn.Dropout2d(p=attn_drop)
         trunc_normal_(self.relative_position_bias_table, std=.02)
+        self.trans_grid = self.get_grid(default_shape).cuda()
+        self.default_shape = default_shape
         # self.register_buffer()
 
     def forward(self, x):
         B, C, H, W = x.shape
-        q, kv = torch.split(self.qkv(x), [C, 2*C], dim=1)
+        if (B, H, W) != self.default_shape:
+            print('Oops')
+            print(self.default_shape)
+            print(B, H, W)
+            self.trans_grid = self.get_grid((B, H, W)).cuda()
+
+        # q, kv = torch.split(self.qkv(x), [C, 2*C], dim=1)
+        qkv = self.qkv(x).reshape(B, 3, C, H, W).permute(1, 0, 2, 3, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]
+        k = k.flatten(0, 1).unsqueeze(0).expand((self.window_size[0]*self.window_size[1], -1, -1, -1))
+        k = F.grid_sample(k, self.trans_grid, mode='nearest', align_corners=False).reshape(
+            self.window_size[0] * self.window_size[1], B, C, H, W
+            ).permute(1, 2, 0, 3, 4)
+        v = v.flatten(0, 1).unsqueeze(0).expand((self.window_size[0] * self.window_size[1], -1, -1, -1))
+        v = F.grid_sample(v, self.trans_grid, mode='nearest', align_corners=False).reshape(
+            self.window_size[0] * self.window_size[1], B, C, H, W
+        ).permute(1, 2, 0, 3, 4)
+
+        # kv = kv.flatten(0, 1).repeat((self.window_size[0]*self.window_size[1], 1, 1, 1))
+        # kv = F.grid_sample(kv, self.trans_grid, mode='nearest', align_corners=False).reshape(
+        #     self.window_size[0]*self.window_size[1], B, 2*C, H, W
+        # ).permute(1, 2, 0, 3, 4)
+
+
         # q: B C H W kv: B 2C H W
-        kv = self.padding(kv).unsqueeze(2)
-        # kv: B 2C 1 H W
-        kv = torch.cat(
-            [kv[..., i // self.window_size[0]:i // self.window_size[0] + H,
-             i % self.window_size[0]:i % self.window_size[0] + W]
-             for i in range(self.window_size[0] * self.window_size[1])
-             ], dim=2
-        )
-        k, v = torch.split(kv, C, dim=1)  # B C w*w H W
+        # kv = self.padding(kv).unsqueeze(2)
+        # # kv: B 2C 1 H W
+        # kv = torch.cat(
+        #     [kv[..., i // self.window_size[0]:i // self.window_size[0] + H,
+        #      i % self.window_size[0]:i % self.window_size[0] + W]
+        #      for i in range(self.window_size[0] * self.window_size[1])
+        #      ], dim=2
+        # )
+        # k, v = torch.split(kv, C, dim=1)  # B C w*w H W
 
         attn_map = torch.mul(q.unsqueeze(2) * self.scale,
                              k).reshape(B, self.num_heads, C//self.num_heads,
@@ -108,16 +134,31 @@ class convAttention(nn.Module):
 
         return attn_map
 
+    def get_grid(self, input_shape):
+        B, H, W = input_shape
+        scale = torch.tensor([W, H])
+        pos = torch.tensor([self.window_size[1]//2, self.window_size[0]//2])
+        theta = torch.eye(2).unsqueeze(0).expand(self.window_size[0]*self.window_size[1], -1, -1)
+
+        trans = torch.stack(
+            torch.meshgrid([torch.arange(self.window_size[0]), torch.arange(self.window_size[1])])[::-1]
+        )   # 2, w, w
+        trans = (trans.flatten(1).permute(1, 0) - pos) / scale * 2
+
+        theta = torch.cat([theta, trans.unsqueeze(2)], dim=2)
+
+        return F.affine_grid(theta, [trans.shape[0], B*self.dim, H, W], align_corners=False)
+
 
 class ConvTransBlock(nn.Module):
     def __init__(self, dim, num_heads, win_size=(7, 7), attn_drop=0., conv_drop=0., drop_path=0.,
-                 conv_dim_ratio=4, act_layer=nn.GELU,):
+                 conv_dim_ratio=4, act_layer=nn.GELU, default_shape=(32, 24, 24)):
         super().__init__()
         self.norm1 = nn.LayerNorm(dim)
         self.norm2 = nn.LayerNorm(dim)
         self.dim = dim
         self.convAttention = convAttention(dim=dim, num_heads=num_heads, win_size=win_size,
-                                           attn_drop=attn_drop)
+                                           attn_drop=attn_drop, default_shape=default_shape)
         self.convLayers = convLayers(dim, hidden_dim=int(dim * conv_dim_ratio), act_layer=act_layer, drop=conv_drop)
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
@@ -158,7 +199,7 @@ class patchEmbedding(nn.Module):
 
 class BasicLayer(nn.Module):
     def __init__(self, depth, dim, num_heads, win_size, conv_dim_ratio=4,
-                 attn_drop=0., conv_drop=0., drop_path=[0.], downsample=None):
+                 attn_drop=0., conv_drop=0., drop_path=[0.], downsample=None, default_shape=(32, 24, 24)):
         super().__init__()
         self.blocks = nn.ModuleList([
             ConvTransBlock(dim,
@@ -168,6 +209,7 @@ class BasicLayer(nn.Module):
                            attn_drop=attn_drop,
                            conv_drop=conv_drop,
                            drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
+                           default_shape=default_shape
                            ) for i in range(depth)
         ])
         # if downsample is not None:
@@ -195,7 +237,7 @@ class PatchMerging(nn.Module):
 
 class convTransformer(nn.Module):
     def __init__(self, in_chans=3, num_classes=10, embed_dim=96, depths=[2, 2, 6, 2], num_heads=[3, 6, 12, 24],
-                 window_size=7, drop_path_rate=0.1, norm_layer=nn.LayerNorm):
+                 window_size=7, drop_path_rate=0.1, norm_layer=nn.LayerNorm, B=32, patch_resolution=(56, 56)):
         super().__init__()
         self.num_classes = num_classes
 
@@ -213,6 +255,7 @@ class convTransformer(nn.Module):
                                conv_drop=0,
                                attn_drop=0,
                                drop_path=dpr[sum(depths[:i]):sum(depths[:i + 1])],
+                               default_shape=(B, int(patch_resolution[0]*2**(-i)), int(patch_resolution[1]*2**(-i))),
                                downsample=PatchMerging(embed_dim * 2 ** i)
                                if i + 1 < len(depths) else None
                                )
@@ -240,19 +283,24 @@ class convTransformer(nn.Module):
 if __name__ == '__main__':
     from torchsummary import summary
 
-    at = ConvTransBlock(dim=96, num_heads=3).cuda()
-    a = torch.rand(32, 96, 24, 24).cuda()
-    # summary(at, (96, 48, 48), batch_size=8)
-    b = at(a)
-    print(b.shape)
-    c = convTransformer(num_classes=10, embed_dim=96, window_size=7, depths=[2, 2, 6, 2], num_heads=[3, 6, 12, 24]).cuda()
-    a = torch.rand(1, 3, 256, 256).cuda()
-    import time
+    # at = ConvTransBlock(dim=96, num_heads=3).cuda()
+    # a = torch.rand(32, 96, 24, 24).cuda()
+    # # summary(at, (96, 48, 48), batch_size=8)
+    # b = at(a)
+    # print(b.shape)
+    # c = convTransformer(num_classes=10, embed_dim=96, window_size=7, depths=[2, 2, 6, 2], num_heads=[3, 6, 12, 24]).cuda()
+    # a = torch.rand(1, 3, 256, 256).cuda()
+    # import time
+    #
+    # t = time.time()
+    # b = c(a)
+    # print(time.time() - t)
+    # summary(c, (3, 224, 224), batch_size=8)
+    a = convAttention(dim=96, num_heads=3, win_size=(7, 7), default_shape=(2, 24, 24)).cuda()
+    for _ in range(100):
+        b = torch.rand(2, 96, 24, 24).cuda()
+        a(b)
 
-    t = time.time()
-    b = c(a)
-    print(time.time() - t)
-    summary(c, (3, 224, 224), batch_size=8)
 
 
 
