@@ -11,11 +11,13 @@ from torchsummary import summary
 from torchvision import models as models
 from load_dataset import build_dataset
 from lr_scheduler import build_scheduler
+from swin_transformer import SwinTransformer
+from optimizer_swin import build_optimizer as swin_optim
 logging.basicConfig(level=logging.INFO)
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--n_epochs", type=int, default=300, help="number of epochs of training")
+parser.add_argument("--n_epochs", type=int, default=350, help="number of epochs of training")
 parser.add_argument("--batch_size", type=int, default=32, help="size of the batches")
 parser.add_argument("--log_frequency", type=int, default=10, help="log info per batches")
 parser.add_argument("--model", type=str, default='convTrans', help="the trained model")
@@ -40,10 +42,13 @@ class gqTrain:
         logging.info('data set loaded')
         if 'convTrans' in opt.model:
             self.network = convTransformer(B=opt.batch_size).to(self.device)
+            self.optimizer = build_optimizer(self.network)
         else:
-            self.network = models.resnet50(num_classes=10).to(self.device)
+            # self.network = models.resnet50(num_classes=10).to(self.device)
+            self.network = SwinTransformer(num_classer=10).to(self.device)
+            self.optimizer = swin_optim(self.network)
         summary(self.network, (3, 224, 224), batch_size=opt.batch_size)
-        self.optimizer = build_optimizer(self.network)
+        # self.optimizer = build_optimizer(self.network)
         self.num_step_per_epoch = len(self.trainDataLoader)
         self.lr_scheduler = build_scheduler(opt, optimier=self.optimizer, n_iter_per_epoch=self.num_step_per_epoch)
         self.currentEpoch = 0
@@ -138,7 +143,7 @@ class gqTrain:
             if i % 5 == 0:
                 accuracy = self.validate()
                 if accuracy > self.maxAcc or (i + 1) % 10 == 0:
-                    self.maxAcc = accuracy
+                    self.maxAcc = max(accuracy, self.maxAcc)
                     self.save(self.currentEpoch, accuracy)
                 self.acc_value = np.append(self.acc_value, accuracy.cpu().detach().numpy())
                 self.network.train()
