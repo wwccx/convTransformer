@@ -21,7 +21,7 @@ parser.add_argument("--n_epochs", type=int, default=350, help="number of epochs 
 parser.add_argument("--batch_size", type=int, default=32, help="size of the batches")
 parser.add_argument("--log_frequency", type=int, default=10, help="log info per batches")
 parser.add_argument("--model", type=str, default='convTrans', help="the trained model")
-parser.add_argument("--dataset", type=str, default='CIFAR', help='the dataset')
+parser.add_argument("--dataset", type=str, default='imagenet', help='the dataset')
 parser.add_argument("--check_point", type=str, default='')
 opt = parser.parse_args()
 
@@ -41,7 +41,11 @@ class gqTrain:
 
         logging.info('data set loaded')
         if 'convTrans' in opt.model:
-            self.network = convTransformer(B=opt.batch_size).to(self.device)
+            self.network = convTransformer(B=opt.batch_size,
+                    num_classes=1000).to(self.device)
+            self.optimizer = build_optimizer(self.network)
+        elif 'res' in opt.model:
+            self.network = models.resnet50(num_classes=10).to(self.device)
             self.optimizer = build_optimizer(self.network)
         else:
             # self.network = models.resnet50(num_classes=10).to(self.device)
@@ -140,7 +144,7 @@ class gqTrain:
 
         for i in range(self.currentEpoch, epoch):
             self.train()
-            if i % 5 == 0:
+            if i % 1 == 0:
                 accuracy = self.validate()
                 if accuracy > self.maxAcc or (i + 1) % 10 == 0:
                     self.maxAcc = max(accuracy, self.maxAcc)
