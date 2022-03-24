@@ -67,13 +67,15 @@ class convAttention(nn.Module):
         qkv = self.qkv(x).reshape(B, 3, C, H, W).permute(1, 0, 2, 3, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]
         k = k.flatten(0, 1).unsqueeze(0).expand((self.window_size[0]*self.window_size[1], -1, -1, -1))
-        k = F.grid_sample(k, self.trans_grid, mode='nearest', align_corners=False).reshape(
-            self.window_size[0] * self.window_size[1], B, C, H, W
-            ).permute(1, 2, 0, 3, 4)
+        k = F.grid_sample(k, self.trans_grid, mode='nearest', align_corners=False).transpose(0, 1).reshape(
+            B, C, self.window_size[0] * self.window_size[1], H, W
+            )
+
         v = v.flatten(0, 1).unsqueeze(0).expand((self.window_size[0] * self.window_size[1], -1, -1, -1))
-        v = F.grid_sample(v, self.trans_grid, mode='nearest', align_corners=False).reshape(
-            self.window_size[0] * self.window_size[1], B, C, H, W
-        ).permute(1, 2, 0, 3, 4)
+        v = F.grid_sample(v, self.trans_grid, mode='nearest', align_corners=False).transpose(0, 1).reshape(
+            B, C, self.window_size[0] * self.window_size[1], H, W
+            )
+
 
         # kv = kv.flatten(0, 1).repeat((self.window_size[0]*self.window_size[1], 1, 1, 1))
         # kv = F.grid_sample(kv, self.trans_grid, mode='nearest', align_corners=False).reshape(
@@ -166,14 +168,14 @@ class ConvTransBlock(nn.Module):
         B, C, H, W = x.shape
         short_cut = x
         # print(self.dim, x.shape)
-        x = self.norm1(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+        x = self.norm1(x.transpose(1, 3)).transpose(1, 3)
 
         x = self.convAttention(x)
 
         x = short_cut + self.drop_path(x)
 
         x = x + self.drop_path(self.convLayers(
-            self.norm2(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+            self.norm2(x.transpose(1, 3)).transpose(1, 3)
         ))
 
         return x
