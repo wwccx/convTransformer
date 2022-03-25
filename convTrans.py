@@ -58,9 +58,9 @@ class convAttention(nn.Module):
     def forward(self, x):
         B, C, H, W = x.shape
         if (B, H, W) != self.default_shape:
-            print('Oops')
-            print(self.default_shape)
-            print(B, H, W)
+            # print('Oops')
+            # print(self.default_shape)
+            # print(B, H, W)
             self.trans_grid = self.get_grid((B, H, W)).cuda()
 
         # q, kv = torch.split(self.qkv(x), [C, 2*C], dim=1)
