@@ -117,7 +117,7 @@ class gqTrain:
                         self.loss_value)
                 np.save(os.path.join(self.saveDir, 'lr_value.npy'),
                         self.lr)
-            if (batchIdx + 1) % (10 * log_frequency) == 0:
+            if (batchIdx + 1) % (20 * log_frequency) == 0:
                 self.save(self.currentEpoch, -1)
             batchIdx += 1
             p.update(tid, advance=1, loss=loss.item(), avg_loss=avg_loss,
