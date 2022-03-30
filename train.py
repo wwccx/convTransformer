@@ -85,7 +85,7 @@ class gqTrain:
         batch_time = 0
         t0 = time.time()
         tid = p.add_task(f'Epoch{self.currentEpoch}', loss=0, avg_loss=0,
-                         batch_time=0)
+                         batch_time=0, lr=0)
         p.update(tid, total=self.num_step_per_epoch)
         # if task_id:
             # self.progress.start_task(task_id)
@@ -121,7 +121,7 @@ class gqTrain:
                 self.save(self.currentEpoch, -1)
             batchIdx += 1
             p.update(tid, advance=1, loss=loss.item(), avg_loss=avg_loss,
-                     batch_time=batch_time)
+                     batch_time=batch_time, lr=self.lr[-1])
             self.lr_scheduler.step_update(self.currentEpoch * self.num_step_per_epoch + batchIdx)
             # self.progress.update(task_id, total=self.num_step_per_epoch,
             #         completed=batchIdx)
@@ -212,6 +212,7 @@ class gqTrain:
 
             self.acc_value = np.load(os.path.join(save_path, 'acc_value.npy'))
             self.loss_value = np.load(os.path.join(save_path, 'loss_value.npy'))
+            self.lr = np.load(os.path.join(save_path, 'lr_value.npy'))
         else:
             raise FileNotFoundError('No check points in the path!')
 
@@ -260,6 +261,8 @@ class gqTrain:
                TextColumn("[bold blue]{task.description}", justify="right"),
                "[progress.percentage]{task.percentage:>.3f}%",
                BarColumn(bar_width=None),
+               "•",
+               TextColumn("lr:{task.fields[lr]:>5.4e}"),
                "•",
                TextColumn("L:{task.fields[loss]:>6.5e}"),
                "•",

@@ -8,9 +8,9 @@ out_dict = os.listdir(out_path)
 
 training_dict = [os.path.join(out_path, d) for d in out_dict]
 training_dict.sort(key=os.path.getmtime)
-loss_conv = np.load(os.path.join(training_dict[-3], 'loss_value.npy'))
-acc_conv = np.load(os.path.join(training_dict[-3], 'acc_value.npy'))
-
+loss_conv = np.load(os.path.join(training_dict[-1], 'loss_value.npy'))
+acc_conv = np.load(os.path.join(training_dict[-1], 'acc_value.npy'))
+lr_conv = np.load(os.path.join(training_dict[-1], 'lr_value.npy'))
 def pooling(a, kernel_size=10):
     output_shape = (a.shape[0] - kernel_size) // kernel_size
     a = a[:output_shape*kernel_size]
@@ -25,6 +25,8 @@ plt.plot(loss_conv[start_index:], label='convT')
 plt.legend()
 plt.figure(2)
 plt.plot(acc_conv[1:], label='conv')
+plt.figure(3)
+plt.plot(lr_conv[1:], label='lr')
 plt.legend()
 plt.show()
 
