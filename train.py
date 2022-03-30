@@ -236,7 +236,7 @@ class gqTrain:
             #     self.optimizer.step()
             # print(prof.display(show_events=True))
             # break
-            with torch.autograd.profiler.profile(enabled=True, use_cuda=True) as prof:
+            with torch.autograd.profiler.profile(enabled=True, use_cuda=True, record_shapes=True) as prof:
                 target = target.to(self.device)
                 img = img.to(self.device)
                 t = time.time()
@@ -249,7 +249,7 @@ class gqTrain:
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
-            print(prof.key_averages().table(sort_by="self_cpu_time_total"))
+            print(prof.key_averages(group_by_input_shape=True).table(sort_by="self_cuda_time_total"))
             break
 
     @staticmethod

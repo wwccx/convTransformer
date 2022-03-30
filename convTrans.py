@@ -64,7 +64,7 @@ class convAttention(nn.Module):
             self.trans_grid = self.get_grid((B, H, W)).cuda()
 
         # q, kv = torch.split(self.qkv(x), [C, 2*C], dim=1)
-        qkv = self.qkv(x).reshape(B, 3, C, H, W).permute(1, 0, 2, 3, 4)
+        qkv = self.qkv(x).reshape(B, 3, C, H, W).tranpose(0, 1)
         q, k, v = qkv[0], qkv[1], qkv[2]
         k = k.flatten(0, 1).unsqueeze(0).expand((self.window_size[0]*self.window_size[1], -1, -1, -1))
         k = F.grid_sample(k, self.trans_grid, mode='nearest', align_corners=False).transpose(0, 1).reshape(
