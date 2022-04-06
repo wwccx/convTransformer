@@ -3,18 +3,18 @@ from timm.scheduler.cosine_lr import CosineLRScheduler
 
 
 def build_scheduler(config, optimier, n_iter_per_epoch):
-    num_steps = 75 * n_iter_per_epoch
+    num_steps = 2 * n_iter_per_epoch
     warmup_steps = int(10 * n_iter_per_epoch)
     decay_steps = int(30 * n_iter_per_epoch)
     lr_scheduler = CosineLRScheduler(
         optimier,
         t_initial=num_steps,
-        t_mul=1,
+        t_mul=1.05,
         lr_min=5e-6,
         warmup_lr_init=5e-7,
         warmup_t=warmup_steps,
-        cycle_limit=1,
-        decay_rate=1,
+        cycle_limit=0,
+        decay_rate=0.95,
         t_in_epochs=False,
     )
 
