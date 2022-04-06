@@ -57,7 +57,7 @@ class gqTrain:
             # self.network = models.resnet50(num_classes=10).to(self.device)
             self.network = SwinTransformer(num_classer=10).to(self.device)
             self.optimizer = swin_optim(self.network)
-        summary(self.network, (3, 224, 224), batch_size=opt.batch_size)
+        # summary(self.network, (3, 224, 224), batch_size=opt.batch_size)
         # self.optimizer = build_optimizer(self.network)
         self.num_step_per_epoch = len(self.trainDataLoader)
         self.lr_scheduler = build_scheduler(opt, optimier=self.optimizer, n_iter_per_epoch=self.num_step_per_epoch)
@@ -161,7 +161,10 @@ class gqTrain:
             'optimizer': self.optimizer.state_dict(),
             'lr_scheduler': self.lr_scheduler.state_dict(),
             'epoch': self.currentEpoch,
-            'accuracy': accuracy
+            'accuracy': accuracy,
+            'loss': self.loss_value,
+            'acc': self.acc_value,
+            'lr': self.lr,
         }
         if accuracy < 0:
             save_path = os.path.join(self.saveDir,
@@ -169,7 +172,8 @@ class gqTrain:
             torch.save(save_state, save_path)
             return
         save_path = os.path.join(self.saveDir,
-                                 opt.model + opt.dataset + dt + 'state_epoch{}_acc{:.4f}.pth'.format(epoch, accuracy))
+                                 opt.model + opt.dataset + dt + 'state_epoch{}_acc{:.4f}.pth'.format(
+                                     epoch, accuracy))
         torch.save(save_state, save_path)
         logging.info('save to ' + save_path)
 
@@ -206,13 +210,49 @@ class gqTrain:
             check_point = torch.load(latest_ckpt)
             self.network.load_state_dict(check_point['model'])
             self.optimizer.load_state_dict(check_point['optimizer'])
-            self.lr_scheduler.load_state_dict(check_point['lr_scheduler'])
+            # self.optimizer.param_groups[0]['weight_decay'] = 0.005
+            # self.lr_scheduler.load_state_dict(check_point['lr_scheduler'])
             self.currentEpoch = check_point['epoch'] + 1
             self.maxAcc = max(self.maxAcc, check_point['accuracy'])
+            try:
+                self.acc_value = np.array(check_point['acc'])
+                self.loss_value = np.array(check_point['loss'])
+                self.lr = np.array(check_point['lr'])
+            except:
+                self.acc_value = np.load(os.path.join(save_path, 'acc_value.npy'))
+                self.loss_value = np.load(os.path.join(save_path, 'loss_value.npy'))
+                self.lr = np.load(os.path.join(save_path, 'lr_value.npy'))
+        else:
+            raise FileNotFoundError('No check points in the path!')
 
-            self.acc_value = np.load(os.path.join(save_path, 'acc_value.npy'))
-            self.loss_value = np.load(os.path.join(save_path, 'loss_value.npy'))
-            self.lr = np.load(os.path.join(save_path, 'lr_value.npy'))
+    def test_train(self):
+        log_frequency = 10
+        self.network.train()
+        batchIdx = 0
+        t0 = time.time()
+
+        for img, target in self.trainDataLoader:
+            # with torchprof.Profile(self.network, use_cuda=True) as prof:
+            #     target = target.to(self.device)
+            #     img = img.to(self.device)
+            #     t = time.time()
+            #     target_pre = self.network(img)
+            #     # torch.cuda.synchronize()
+            #     print(time.time() - t)
+            #     loss = self.lossFun(target_pre, target)
+            #     # self.loss_value = np.append(self.loss_value, loss.item())
+            #     self.optimizer.zero_grad()
+            #     loss.backward()
+            #     self.optimizer.step()
+            # print(prof.display(show_events=True))
+            # break
+            with torch.autograd.profiler.profile(enabled=True, use_cuda=True, record_shapes=True) as prof:
+                target = target.to(self.device)
+                img = img.to(self.device)
+                t = time.time()
+                target_pre = self.network(img)
+                torch.cuda.synchronize()
+                print(time.time() - t)
         else:
             raise FileNotFoundError('No check points in the path!')
 

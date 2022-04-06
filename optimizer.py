@@ -8,7 +8,7 @@ def build_optimizer(model):
     parameters = set_weight_decay(model, skip_keywords)
 
     optimizer = optim.AdamW(parameters, eps=1e-8, betas=(0.9, 0.999),
-                            lr=5e-4, weight_decay=0.05)
+                            lr=5e-6, weight_decay=0.005)
 
     return optimizer
 
