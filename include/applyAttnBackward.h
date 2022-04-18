@@ -1,0 +1,11 @@
+void launch_applyAttnBackward(float* gAttn,
+                             float* gV,
+                             const float* gX,
+                             const float* Attn,
+                             const float* V,
+                             int B,
+                             int Heads,
+                             int win,
+                             int C,
+                             int H,
+                             int W);
