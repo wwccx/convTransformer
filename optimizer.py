@@ -1,15 +1,19 @@
 from torch import optim as optim
+from ATTCG import ATTCG
 
+def build_optimizer(config, model):
 
-def build_optimizer(model):
-    skip_keywords = {}
-    if hasattr(model, 'no_weight_decay_keywords'):
-        skip_keywords = model.no_weight_decay_keywords()
-    parameters = set_weight_decay(model, skip_keywords)
+    optim = config.optim
+    if optim.lower() == 'adamw':
+        skip_keywords = {}
+        if hasattr(model, 'no_weight_decay_keywords'):
+            skip_keywords = model.no_weight_decay_keywords()
+        parameters = set_weight_decay(model, skip_keywords)
 
-    optimizer = optim.AdamW(parameters, eps=1e-8, betas=(0.9, 0.999),
-                            lr=5e-4, weight_decay=0.05)
-
+        optimizer = optim.AdamW(parameters, eps=1e-8, betas=(0.9, 0.999),
+                            lr=1.25e-4, weight_decay=0.05, amsgrad=True)
+    elif optim.lower() == 'attcg':
+        optimizer = ATTCG(model.parameters(), lr=5e-4) 
     return optimizer
 
 

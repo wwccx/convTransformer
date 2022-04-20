@@ -23,12 +23,13 @@ logging.basicConfig(level=logging.INFO)
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--n_epochs", type=int, default=350, help="number of epochs of training")
-parser.add_argument("--batch_size", type=int, default=32, help="size of the batches")
+parser.add_argument("--n_epochs", type=int, default=300, help="number of epochs of training")
+parser.add_argument("--batch_size", type=int, default=128, help="size of the batches")
 parser.add_argument("--log_frequency", type=int, default=10, help="log info per batches")
 parser.add_argument("--model", type=str, default='convTrans', help="the trained model")
 parser.add_argument("--dataset", type=str, default='imagenet', help='the dataset')
 parser.add_argument("--check_point", type=str, default='')
+parser.add_argument("--optim", type=str, default='attcg')
 opt = parser.parse_args()
 
 
@@ -49,10 +50,10 @@ class gqTrain:
         if 'convTrans' in opt.model:
             self.network = convTransformer(B=opt.batch_size,
                     num_classes=1000).to(self.device)
-            self.optimizer = build_optimizer(self.network)
+            self.optimizer = build_optimizer(opt, self.network)
         elif 'res' in opt.model:
             self.network = models.resnet50(num_classes=10).to(self.device)
-            self.optimizer = build_optimizer(self.network)
+            self.optimizer = build_optimizer(config, self.network)
         else:
             # self.network = models.resnet50(num_classes=10).to(self.device)
             self.network = SwinTransformer(num_classer=10).to(self.device)
@@ -65,9 +66,10 @@ class gqTrain:
         self.loss_value = np.array([])
         self.acc_value = np.array([])
         self.lr = np.array([])
+        self.grad = np.array([])
         self.maxAcc = 0
         self.lossFun = torch.nn.CrossEntropyLoss()
-
+        self.gradNormVal = 2.0
         if check_point:
             self.saveDir = check_point
             logging.info('resuming path:' + self.saveDir)
@@ -83,9 +85,10 @@ class gqTrain:
         batchIdx = 0
         avg_loss = 0
         batch_time = 0
+        avg_grad = 0
         t0 = time.time()
         tid = p.add_task(f'Epoch{self.currentEpoch}', loss=0, avg_loss=0,
-                         batch_time=0, lr=0)
+                         batch_time=0, lr=0, avg_grad=0)
         p.update(tid, total=self.num_step_per_epoch)
         # if task_id:
             # self.progress.start_task(task_id)
@@ -97,11 +100,13 @@ class gqTrain:
             loss = self.lossFun(target_pre, target)
             self.loss_value = np.append(self.loss_value, loss.item())
             self.lr = np.append(self.lr, self.optimizer.param_groups[0]['lr'])
-
             self.optimizer.zero_grad()
             loss.backward()
+            grad_norm = torch.nn.utils.clip_grad_norm_(self.network.parameters(), self.gradNormVal)
             self.optimizer.step()
+            self.grad = np.append(self.grad, grad_norm.item())
             avg_loss = (batchIdx * avg_loss + loss.item()) / (batchIdx + 1)
+            avg_grad = (batchIdx * avg_grad + grad_norm.item()) / (batchIdx + 1) 
             if (batchIdx + 1) % log_frequency == 0:
                 # self.loss_value = np.append(self.loss_value, loss.item())
                 batch_time = (time.time()-t0)/log_frequency
@@ -117,11 +122,13 @@ class gqTrain:
                         self.loss_value)
                 np.save(os.path.join(self.saveDir, 'lr_value.npy'),
                         self.lr)
-            if (batchIdx + 1) % (20 * log_frequency) == 0:
-                self.save(self.currentEpoch, -1)
+                np.save(os.path.join(self.saveDir, 'grad_value.npy'),
+                        self.grad)
+            # if (batchIdx + 1) % (20 * log_frequency) == 0:
+            #     self.save(self.currentEpoch, -1)
             batchIdx += 1
             p.update(tid, advance=1, loss=loss.item(), avg_loss=avg_loss,
-                     batch_time=batch_time, lr=self.lr[-1])
+                     batch_time=batch_time, lr=self.lr[-1], avg_grad=avg_grad)
             self.lr_scheduler.step_update(self.currentEpoch * self.num_step_per_epoch + batchIdx)
             # self.progress.update(task_id, total=self.num_step_per_epoch,
             #         completed=batchIdx)
@@ -161,7 +168,11 @@ class gqTrain:
             'optimizer': self.optimizer.state_dict(),
             'lr_scheduler': self.lr_scheduler.state_dict(),
             'epoch': self.currentEpoch,
-            'accuracy': accuracy
+            'accuracy': accuracy,
+            'loss_hist': self.loss_value,
+            'accuracy_hist': self.acc_value,
+            'lr_hist': self.lr,
+            'grid_hist': self.grad
         }
         if accuracy < 0:
             save_path = os.path.join(self.saveDir,
@@ -206,13 +217,19 @@ class gqTrain:
             check_point = torch.load(latest_ckpt)
             self.network.load_state_dict(check_point['model'])
             self.optimizer.load_state_dict(check_point['optimizer'])
-            self.lr_scheduler.load_state_dict(check_point['lr_scheduler'])
+            # print(self.optimizer.defaults)
+            # self.lr_scheduler.load_state_dict(check_point['lr_scheduler'])
             self.currentEpoch = check_point['epoch'] + 1
             self.maxAcc = max(self.maxAcc, check_point['accuracy'])
-
-            self.acc_value = np.load(os.path.join(save_path, 'acc_value.npy'))
-            self.loss_value = np.load(os.path.join(save_path, 'loss_value.npy'))
-            self.lr = np.load(os.path.join(save_path, 'lr_value.npy'))
+            try:
+                self.acc_value = check_point['accuracy_hist']
+                self.loss_value = check_point['loss_hist']
+                self.lr = check_point['lr_hist']
+                self.grad = check_point['grad_hist']
+            except:
+                self.acc_value = np.load(os.path.join(save_path, 'acc_value.npy'))
+                self.loss_value = np.load(os.path.join(save_path, 'loss_value.npy'))
+                self.lr = np.load(os.path.join(save_path, 'lr_value.npy'))
         else:
             raise FileNotFoundError('No check points in the path!')
 
@@ -269,6 +286,8 @@ class gqTrain:
                TextColumn("L:{task.fields[loss]:>6.5e}"),
                "•",
                TextColumn("avgL:{task.fields[avg_loss]:>6.5e}"),
+               "•",
+               TextColumn("Grad:{task.fields[avg_grad]:>5.4e}"),
                "•",
                TextColumn("bTime:{task.fields[batch_time]:>.3f}s"),
                "•",
