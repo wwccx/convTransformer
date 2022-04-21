@@ -1,6 +1,9 @@
 import numpy as np
 from matplotlib import pyplot as plt
 import os
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument("--dicts", type=str, default='1')
 
 out_path = './train'
 out_dict = os.listdir(out_path)
@@ -21,16 +24,17 @@ def pooling(a, kernel_size=10):
 kernel_size=300
 loss_conv = pooling(loss_conv, kernel_size=kernel_size)
 grad_conv = pooling(grad_conv, kernel_size)
-plt.figure(1)
+plt.subplot(4, 1, 1)
 start_index = 0
-plt.plot(loss_conv[start_index:], label='convT')
+plt.plot(loss_conv[start_index:], label='loss')
 plt.legend()
-plt.figure(2)
-plt.plot(acc_conv[:], label='conv')
-plt.figure(3)
+plt.subplot(4, 1, 2)
+plt.plot(acc_conv[:], label='accuracy')
+plt.legend()
+plt.subplot(4, 1, 3)
 plt.plot(lr_conv[:], label='lr')
 plt.legend()
-plt.figure(4)
+plt.subplot(4, 1, 4)
 plt.plot(grad_conv[:], label='grad')
 plt.legend()
 plt.show()
