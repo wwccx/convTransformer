@@ -4,6 +4,7 @@ from torch.nn import functional as F
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 from torch.utils.cpp_extension import load
 from torch.autograd import Function
+from apex import amp
 
 convAttn = load(name="convAttn",
                 extra_include_paths=["include"],
@@ -26,6 +27,7 @@ applyAttnBackward = load(name="applyAttnBackward",
 
 class convAttnModelFunction(Function):
     @staticmethod
+    @amp.float_function
     def forward(ctx, q, k, shapeInfo):
         B, C, H, W, Heads, win = tuple(shapeInfo)
         ctx.save_for_backward(q, k, shapeInfo)
@@ -34,6 +36,7 @@ class convAttnModelFunction(Function):
         return attnMap
 
     @staticmethod
+    @amp.float_function
     def backward(ctx, grad_output):
         q, k, shapeInfo = ctx.saved_tensors
         B, C, H, W, Heads, win = tuple(shapeInfo)
@@ -46,6 +49,7 @@ class convAttnModelFunction(Function):
 
 class applyAttnModelFunction(Function):
     @staticmethod
+    @amp.float_function
     def forward(ctx, attn, v, shapeInfo):
         B, C, H, W, Heads, win = tuple(shapeInfo)
         ctx.save_for_backward(attn, v, shapeInfo)
@@ -55,6 +59,7 @@ class applyAttnModelFunction(Function):
         return x
 
     @staticmethod
+    @amp.float_function
     def backward(ctx, grad_output):
         attn, v, shapeInfo = ctx.saved_tensors
         B, C, H, W, Heads, win = tuple(shapeInfo)

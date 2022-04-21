@@ -13,6 +13,7 @@ from load_dataset import build_dataset
 from lr_scheduler import build_scheduler
 from swin_transformer import SwinTransformer
 from optimizer_swin import build_optimizer as swin_optim
+from apex import amp
 from rich.progress import (
     BarColumn,
     Progress,
@@ -30,6 +31,8 @@ parser.add_argument("--model", type=str, default='convTrans', help="the trained 
 parser.add_argument("--dataset", type=str, default='imagenet', help='the dataset')
 parser.add_argument("--check_point", type=str, default='')
 parser.add_argument("--optim", type=str, default='attcg')
+parser.add_argument('--amp_level', type=str, default='O1', choices=['O0', 'O1', 'O2'],
+                    help='mixed precision opt level, if O0, no amp is used')
 opt = parser.parse_args()
 
 
@@ -53,11 +56,14 @@ class gqTrain:
             self.optimizer = build_optimizer(opt, self.network)
         elif 'res' in opt.model:
             self.network = models.resnet50(num_classes=10).to(self.device)
-            self.optimizer = build_optimizer(config, self.network)
+            self.optimizer = build_optimizer(opt, self.network)
         else:
             # self.network = models.resnet50(num_classes=10).to(self.device)
             self.network = SwinTransformer(num_classer=10).to(self.device)
             self.optimizer = swin_optim(self.network)
+        if opt.amp_level != 'O0':
+            self.network, self.optimizer = amp.initialize(self.network, self.optimizer, opt_level=opt.amp_level)
+
         summary(self.network, (3, 224, 224), batch_size=opt.batch_size)
         # self.optimizer = build_optimizer(self.network)
         self.num_step_per_epoch = len(self.trainDataLoader)
@@ -100,8 +106,13 @@ class gqTrain:
             loss = self.lossFun(target_pre, target)
             self.loss_value = np.append(self.loss_value, loss.item())
             self.lr = np.append(self.lr, self.optimizer.param_groups[0]['lr'])
+
             self.optimizer.zero_grad()
-            loss.backward()
+            if opt.amp_level != "O0":
+                with amp.scale_loss(loss, self.optimizer) as scaled_loss:
+                    scaled_loss.backward()
+            else:
+                loss.backward()
             grad_norm = torch.nn.utils.clip_grad_norm_(self.network.parameters(), self.gradNormVal)
             self.optimizer.step()
             self.grad = np.append(self.grad, grad_norm.item())
