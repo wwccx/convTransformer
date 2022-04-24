@@ -64,7 +64,7 @@ class gqTrain:
         if opt.amp_level != 'O0':
             self.network, self.optimizer = amp.initialize(self.network, self.optimizer, opt_level=opt.amp_level)
 
-        summary(self.network, (3, 224, 224), batch_size=opt.batch_size)
+        # summary(self.network, (3, 224, 224), batch_size=opt.batch_size)
         # self.optimizer = build_optimizer(self.network)
         self.num_step_per_epoch = len(self.trainDataLoader)
         self.lr_scheduler = build_scheduler(opt, optimier=self.optimizer, n_iter_per_epoch=self.num_step_per_epoch)
@@ -75,7 +75,7 @@ class gqTrain:
         self.grad = np.array([])
         self.maxAcc = 0
         self.lossFun = torch.nn.CrossEntropyLoss()
-        self.gradNormVal = 2.0
+        self.gradNormVal = 0
         if check_point:
             self.saveDir = check_point
             logging.info('resuming path:' + self.saveDir)
@@ -113,11 +113,17 @@ class gqTrain:
                     scaled_loss.backward()
             else:
                 loss.backward()
-            grad_norm = torch.nn.utils.clip_grad_norm_(self.network.parameters(), self.gradNormVal)
+            if self.gradNormVal:
+                grad_norm = torch.nn.utils.clip_grad_norm_(self.network.parameters(), self.gradNormVal)
+                self.grad = np.append(self.grad, grad_norm.item())
+                avg_grad = (batchIdx * avg_grad + grad_norm.item()) / (batchIdx + 1) 
+            else:
+                grad_norm = self.get_grad_norm(self.network.parameters())
+                if not np.isinf(grad_norm):
+                    self.grad = np.append(self.grad, grad_norm)
+                    avg_grad = (batchIdx * avg_grad + grad_norm) / (batchIdx + 1)
             self.optimizer.step()
-            self.grad = np.append(self.grad, grad_norm.item())
             avg_loss = (batchIdx * avg_loss + loss.item()) / (batchIdx + 1)
-            avg_grad = (batchIdx * avg_grad + grad_norm.item()) / (batchIdx + 1) 
             if (batchIdx + 1) % log_frequency == 0:
                 # self.loss_value = np.append(self.loss_value, loss.item())
                 batch_time = (time.time()-t0)/log_frequency
@@ -236,11 +242,12 @@ class gqTrain:
                 self.acc_value = check_point['accuracy_hist']
                 self.loss_value = check_point['loss_hist']
                 self.lr = check_point['lr_hist']
-                self.grad = check_point['grad_hist']
+                self.grad = check_point['grid_hist']
             except:
-                self.acc_value = np.load(os.path.join(save_path, 'acc_value.npy'))
-                self.loss_value = np.load(os.path.join(save_path, 'loss_value.npy'))
-                self.lr = np.load(os.path.join(save_path, 'lr_value.npy'))
+                # self.acc_value = np.load(os.path.join(save_path, 'acc_value.npy'))
+                # self.loss_value = np.load(os.path.join(save_path, 'loss_value.npy'))
+                # self.lr = np.load(os.path.join(save_path, 'lr_value.npy'))
+                pass
         else:
             raise FileNotFoundError('No check points in the path!')
 
@@ -316,7 +323,18 @@ class gqTrain:
                )
 
         return progress
-
+    @staticmethod
+    def get_grad_norm(parameters, norm_type=2):
+        if isinstance(parameters, torch.Tensor):
+            parameters = [parameters]
+        parameters = list(filter(lambda p: p.grad is not None, parameters))
+        norm_type = float(norm_type)
+        total_norm = 0
+        for p in parameters:
+            param_norm = p.grad.data.norm(norm_type)
+            total_norm += param_norm.item() ** norm_type
+        total_norm = total_norm ** (1. / norm_type)
+        return total_norm
 
 if __name__ == '__main__':
     gqTrain = gqTrain()
