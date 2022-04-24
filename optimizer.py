@@ -3,8 +3,8 @@ from ATTCG import ATTCG
 
 def build_optimizer(config, model):
 
-    optim = config.optim
-    if optim.lower() == 'adamw':
+    _optim = config.optim
+    if _optim.lower() == 'adamw':
         skip_keywords = {}
         if hasattr(model, 'no_weight_decay_keywords'):
             skip_keywords = model.no_weight_decay_keywords()
@@ -12,7 +12,7 @@ def build_optimizer(config, model):
 
         optimizer = optim.AdamW(parameters, eps=1e-8, betas=(0.9, 0.999),
                             lr=1.25e-4, weight_decay=0.05, amsgrad=True)
-    elif optim.lower() == 'attcg':
+    elif _optim.lower() == 'attcg':
         optimizer = ATTCG(model.parameters(), lr=5e-4) 
     return optimizer
 
