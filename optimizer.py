@@ -13,7 +13,7 @@ def build_optimizer(config, model):
         optimizer = optim.AdamW(parameters, eps=1e-8, betas=(0.9, 0.999),
                             lr=1.25e-4, weight_decay=0.05, amsgrad=True)
     elif _optim.lower() == 'attcg':
-        optimizer = ATTCG(model.parameters(), lr=5e-4) 
+        optimizer = ATTCG(model.parameters(), lr=1.25e-4) 
     return optimizer
 
 

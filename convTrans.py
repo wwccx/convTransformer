@@ -132,13 +132,14 @@ class convAttention(nn.Module):
         # q, kv = torch.split(self.qkv(x), [C, 2*C], dim=1)
         qkv = self.qkv(x).reshape(B, 3, C, H, W).permute(1, 0, 2, 3, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]
+        q = q * self.scale
         kp = self.padding(k)
         vp = self.padding(v)
         attn_map = convAttnModelFunction.apply(q, kp, shapeInfo)
         relative_position_bias = self.relative_position_bias_table.permute(1, 0).view(
             1, self.num_heads, self.window_size[0] * self.window_size[1], 1, 1
         )
-        attn_map += relative_position_bias
+        attn_map += relative_position_bias * 0
         attn_map = self.softmax(attn_map)
         x = applyAttnModelFunction.apply(attn_map, vp, shapeInfo)
         # k = k.flatten(0, 1).unsqueeze(0).expand((self.window_size[0]*self.window_size[1], -1, -1, -1))
