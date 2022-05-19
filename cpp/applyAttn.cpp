@@ -6,7 +6,8 @@ void launch_applyAttn(float* output,
                       const float* v,
                       int B,
                       int Heads,
-                      int win,
+                      int winh,
+                      int winw,
                       int C,
                       int H,
                       int W);
@@ -15,7 +16,8 @@ void applyAttn(torch::Tensor &output,
                        const torch::Tensor &v,
                        int64_t B,
                        int64_t Heads,
-                       int64_t win,
+                       int64_t winh,
+                       int64_t winw,
                        int64_t C,
                        int64_t H,
                        int64_t W
@@ -23,7 +25,7 @@ void applyAttn(torch::Tensor &output,
     launch_applyAttn((float *)output.data_ptr(),
                    (const float *)attnMap.data_ptr(),
                    (const float *)v.data_ptr(),
-                   B, Heads, win, C, H, W);
+                   B, Heads, winh, winw, C, H, W);
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {

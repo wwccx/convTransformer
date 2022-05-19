@@ -29,20 +29,20 @@ class convAttnModelFunction(Function):
     @staticmethod
     @amp.float_function
     def forward(ctx, q, k, shapeInfo):
-        B, C, H, W, Heads, win = tuple(shapeInfo)
+        B, C, H, W, Heads, winh, winw = tuple(shapeInfo)
         ctx.save_for_backward(q, k, shapeInfo)
-        attnMap = torch.empty((B, Heads, win * win, H, W), device="cuda:0")
-        convAttn.convAttn(attnMap, q, k, B, Heads, win, C, H, W)
+        attnMap = torch.empty((B, Heads, winh * winw, H, W), device="cuda:0")
+        convAttn.convAttn(attnMap, q, k, B, Heads, winh, winw, C, H, W)
         return attnMap
 
     @staticmethod
     @amp.float_function
     def backward(ctx, grad_output):
         q, k, shapeInfo = ctx.saved_tensors
-        B, C, H, W, Heads, win = tuple(shapeInfo)
+        B, C, H, W, Heads, winh, winw = tuple(shapeInfo)
         grad_q = torch.empty((B, C, H, W), device="cuda:0")
-        grad_k = torch.empty((B, C, H + win - 1, W + win - 1), device="cuda:0")
-        convAttnBackward.convAttnBackward(grad_q, grad_k, grad_output, q, k, B, Heads, win, C, H, W)
+        grad_k = torch.empty((B, C, H + winh - 1, W + winw - 1), device="cuda:0")
+        convAttnBackward.convAttnBackward(grad_q, grad_k, grad_output, q, k, B, Heads, winh, winw, C, H, W)
 
         return grad_q, grad_k, None
 
@@ -51,10 +51,10 @@ class applyAttnModelFunction(Function):
     @staticmethod
     @amp.float_function
     def forward(ctx, attn, v, shapeInfo):
-        B, C, H, W, Heads, win = tuple(shapeInfo)
+        B, C, H, W, Heads,  winh, winw = tuple(shapeInfo)
         ctx.save_for_backward(attn, v, shapeInfo)
         x = torch.empty((B, C, H, W), device="cuda:0")
-        applyAttn.applyAttn(x, attn, v, B, Heads, win, C, H, W)
+        applyAttn.applyAttn(x, attn, v, B, Heads, winh, winw, C, H, W)
 
         return x
 
@@ -62,10 +62,10 @@ class applyAttnModelFunction(Function):
     @amp.float_function
     def backward(ctx, grad_output):
         attn, v, shapeInfo = ctx.saved_tensors
-        B, C, H, W, Heads, win = tuple(shapeInfo)
-        grad_attn = torch.empty((B, Heads, win * win, H, W), device="cuda:0")
-        grad_v = torch.empty((B, C, H + win - 1, W + win - 1), device="cuda:0")
-        applyAttnBackward.applyAttnBackward(grad_attn, grad_v, grad_output, attn, v, B, Heads, win, C, H, W)
+        B, C, H, W, Heads, winh, winw = tuple(shapeInfo)
+        grad_attn = torch.empty((B, Heads, winh * winw, H, W), device="cuda:0")
+        grad_v = torch.empty((B, C, H + winh - 1, W + winw - 1), device="cuda:0")
+        applyAttnBackward.applyAttnBackward(grad_attn, grad_v, grad_output, attn, v, B, Heads, winh, winw, C, H, W)
 
         return grad_attn, grad_v, None
 
@@ -124,7 +124,7 @@ class convAttention(nn.Module):
 
     def forward(self, x):
         B, C, H, W = x.shape
-        shapeInfo = torch.tensor((B, C, H, W, self.num_heads, self.window_size[0]))
+        shapeInfo = torch.tensor((B, C, H, W, self.num_heads, self.window_size[0], self.window_size[1]))
         qkv = self.qkv(x).reshape(B, 3, C, H, W).permute(1, 0, 2, 3, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]
         if self.pattern == 'cuda':

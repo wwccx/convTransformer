@@ -5,7 +5,8 @@ __global__ void applyAttnBackward(float* gAttn,
                                  const float* V,
                                  int B,
                                  int Heads,
-                                 int win,
+                                 int winh,
+                                 int winw,
                                  int C,
                                  int H,
                                  int W) {
@@ -16,27 +17,29 @@ __global__ void applyAttnBackward(float* gAttn,
     if (pixelIdx < H * W && dimIdx < embedDim && batchIdx < B * Heads) {
 
         int resoX = H * W;
-        int resoV = resoX + (win - 1) * (H + W + win - 1);  // (H + win - 1) * (W + win - 1)
+        int resoV = resoX + (winh - 1) * W + (winw - 1) * H + (winh - 1) * (winw - 1);  // (H + win - 1) * (W + win - 1)
         // int resoK = (H + win - 1) * (W + win - 1);
         int u = pixelIdx / W;
         int v = pixelIdx % W;
-        int attnIdx = batchIdx * win * win * resoX + pixelIdx;
+        int attnIdx = batchIdx * winh * winw * resoX + pixelIdx;
         int xIdx = (batchIdx * embedDim + dimIdx) * resoX + pixelIdx;
-        int vIdx = (batchIdx * embedDim + dimIdx) * resoV + pixelIdx + u * (win - 1);
+        int vIdx = (batchIdx * embedDim + dimIdx) * resoV + pixelIdx + u * (winw - 1);
+        //(batchIdx * embedDim + dimIdx) * resoV + u * (W + winw - 1) + v;
         float sumV = 0;
         int uq = 0;
         int vq = 0;
         int pixelBias = 0;
-        for (int i = 0; i < win * win; i++) {
+        for (int i = 0; i < winh * winw; i++) {
 //             gAttn[attnIdx + i * resoX] += gX[xIdx] * V[vIdx + (i / win) * (W + win - 1) + (i % win)];
-            uq = u + win / 2 - (i / win);
-            vq = v + win / 2 - (i % win);
+            uq = u + winh / 2 - (i / winw);
+            vq = v + winw / 2 - (i % winw);
             if (uq >= 0 && uq < H && vq >= 0 && vq < W) {
-               pixelBias = (win / 2 - i / win) * W + (win / 2 - i % win);
+               pixelBias = (winh / 2 - i / winw) * W + (winw / 2 - i % winw);
                sumV += gX[xIdx + pixelBias] * Attn[attnIdx + i * resoX + pixelBias];
             }
         }
-        gV[vIdx + (win / 2) * (H + win - 1) + win / 2] = sumV;
+        gV[vIdx + (winw / 2) * (H + winh - 1) + winw / 2] = sumV;
+        // (i / winw) * (W + winw - 1) + i % win
     }
 }
 
@@ -46,7 +49,8 @@ __global__ void applyAttnBackwardAttn(float* gAttn,
                                  const float* V,
                                  int B,
                                  int Heads,
-                                 int win,
+                                 int winh,
+                                 int winw,
                                  int C,
                                  int H,
                                  int W) {
@@ -54,22 +58,22 @@ __global__ void applyAttnBackwardAttn(float* gAttn,
     int winPixelIndex = blockIdx.y * blockDim.y + threadIdx.y;
     int batchIdx = blockIdx.z * blockDim.z + threadIdx.z;
 
-    if (pixelIdx < H * W && winPixelIndex < win * win && batchIdx < B * Heads) {
+    if (pixelIdx < H * W && winPixelIndex < winh * winw && batchIdx < B * Heads) {
         int embedDim = C / Heads;
 
         int resoX = H * W;
-        int resoV = resoX + (win - 1) * (H + W + win - 1);  // (H + win - 1) * (W + win - 1)
+        int resoV = resoX + (winh - 1) * W + (winw - 1) * H + (winh - 1) * (winw - 1);  // (H + win - 1) * (W + win - 1)
         int u = pixelIdx / W;
         int v = pixelIdx % W;
 
         float sumAttn = 0;
         int xIdx = batchIdx * embedDim * resoX + pixelIdx;
-        int vIdx = batchIdx * embedDim * resoV + (u + winPixelIndex / win) * (W + win - 1) + v + winPixelIndex % win;
+        int vIdx = batchIdx * embedDim * resoV + (u + winPixelIndex / winw) * (W + winw - 1) + v + winPixelIndex % winw;
 
         for (int i = 0; i < embedDim; i++) {
             sumAttn = sumAttn + gX[xIdx + i * resoX] * V[vIdx + i * resoV];
         }
-        gAttn[(batchIdx * win * win + winPixelIndex) * resoX + pixelIdx] = sumAttn;
+        gAttn[(batchIdx * winh * winw + winPixelIndex) * resoX + pixelIdx] = sumAttn;
 
     }
 }
@@ -81,17 +85,18 @@ void launch_applyAttnBackward(float* gAttn,
                              const float* V,
                              int B,
                              int Heads,
-                             int win,
+                             int winh,
+                             int winw,
                              int C,
                              int H,
                              int W) {
     dim3 gridV((H * W + 31) / 32, C / Heads, (B * Heads + 31) / 32);
     dim3 blockV(32, 1, 32);
-    applyAttnBackward<<<gridV, blockV>>>(gAttn, gV, gX, Attn, V, B, Heads, win, C, H, W);
+    applyAttnBackward<<<gridV, blockV>>>(gAttn, gV, gX, Attn, V, B, Heads, winh, winw, C, H, W);
 
     dim3 gridAttn((H * W + 31) / 32, win*win, (B * Heads + 31) / 32);
     dim3 blockAttn(32, 1, 32);
-    applyAttnBackwardAttn<<<gridAttn, blockAttn>>>(gAttn, gX, Attn, V, B, Heads, win, C, H, W);
+    applyAttnBackwardAttn<<<gridAttn, blockAttn>>>(gAttn, gX, Attn, V, B, Heads, winh, winw, C, H, W);
 }
 
 

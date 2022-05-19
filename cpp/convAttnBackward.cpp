@@ -7,7 +7,8 @@ void launch_convAttnBackward(float* gQ,
                      const float* K,
                      int B,
                      int Heads,
-                     int win,
+                     int winh,
+                     int winw,
                      int C,
                      int H,
                      int W);
@@ -19,7 +20,8 @@ void convAttnBackward(torch::Tensor &gQ,
                             const torch::Tensor &K,
                             int64_t B,
                             int64_t Heads,
-                            int64_t win,
+                            int64_t winh,
+                            int64_t winw,
                             int64_t C,
                             int64_t H,
                             int64_t W
@@ -29,7 +31,7 @@ void convAttnBackward(torch::Tensor &gQ,
                     (const float *)attn.data_ptr(),
                     (const float *)Q.data_ptr(),
                     (const float *)K.data_ptr(),
-                    B, Heads, win, C, H, W);
+                    B, Heads, winh, winw, C, H, W);
 }
 
 
