@@ -63,11 +63,12 @@ class applyAttnModelFunction(Function):
     def backward(ctx, grad_output):
         attn, v, shapeInfo = ctx.saved_tensors
         B, C, H, W, Heads, win = tuple(shapeInfo)
-        grad_attn = torch.empty((B, Heads, win*win, H, W), device="cuda:0")
+        grad_attn = torch.empty((B, Heads, win * win, H, W), device="cuda:0")
         grad_v = torch.empty((B, C, H + win - 1, W + win - 1), device="cuda:0")
         applyAttnBackward.applyAttnBackward(grad_attn, grad_v, grad_output, attn, v, B, Heads, win, C, H, W)
 
         return grad_attn, grad_v, None
+
 
 class convLayers(nn.Module):
     def __init__(self, in_dim, hidden_dim=None, out_dim=None, act_layer=nn.GELU, drop=0.):
@@ -118,69 +119,48 @@ class convAttention(nn.Module):
         trunc_normal_(self.relative_position_bias_table, std=.02)
         self.trans_grid = self.get_grid(default_shape).cuda()
         self.default_shape = default_shape
+        self.pattern = 'cuda'
         # self.register_buffer()
 
     def forward(self, x):
         B, C, H, W = x.shape
         shapeInfo = torch.tensor((B, C, H, W, self.num_heads, self.window_size[0]))
-        # if (B, H, W) != self.default_shape:
-        #     # print('Oops')
-        #     # print(self.default_shape)
-        #     # print(B, H, W)
-        #     self.trans_grid = self.get_grid((B, H, W)).cuda()
-
-        # q, kv = torch.split(self.qkv(x), [C, 2*C], dim=1)
         qkv = self.qkv(x).reshape(B, 3, C, H, W).permute(1, 0, 2, 3, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]
-        q = q * self.scale
-        kp = self.padding(k)
-        vp = self.padding(v)
-        attn_map = convAttnModelFunction.apply(q, kp, shapeInfo)
-        relative_position_bias = self.relative_position_bias_table.permute(1, 0).view(
-            1, self.num_heads, self.window_size[0] * self.window_size[1], 1, 1
-        )
-        attn_map += relative_position_bias
-        attn_map = self.softmax(attn_map)
-        x = applyAttnModelFunction.apply(attn_map, vp, shapeInfo)
-        # k = k.flatten(0, 1).unsqueeze(0).expand((self.window_size[0]*self.window_size[1], -1, -1, -1))
-        # k = F.grid_sample(k, self.trans_grid, mode='nearest', align_corners=False).transpose(0, 1).reshape(
-        #     B, C, self.window_size[0] * self.window_size[1], H, W
-        #     )
-        #
-        # v = v.flatten(0, 1).unsqueeze(0).expand((self.window_size[0] * self.window_size[1], -1, -1, -1))
-        # v = F.grid_sample(v, self.trans_grid, mode='nearest', align_corners=False).transpose(0, 1).reshape(
-        #     B, C, self.window_size[0] * self.window_size[1], H, W
-        #     )
+        if self.pattern == 'cuda':
+            q = q * self.scale
+            kp = self.padding(k)
+            vp = self.padding(v)
+            attn_map = convAttnModelFunction.apply(q, kp, shapeInfo)
+            relative_position_bias = self.relative_position_bias_table.permute(1, 0).view(
+                1, self.num_heads, self.window_size[0] * self.window_size[1], 1, 1
+            )
+            attn_map += relative_position_bias * 0
+            attn_map = self.softmax(attn_map)
+            x = applyAttnModelFunction.apply(attn_map, vp, shapeInfo)
+        else:
+            if (B, H, W) != self.default_shape:
+                self.trans_grid = self.get_grid((B, H, W)).cuda()
+            k = k.flatten(0, 1).unsqueeze(0).expand((self.window_size[0] * self.window_size[1], -1, -1, -1))
+            k = F.grid_sample(k, self.trans_grid, mode='nearest', align_corners=False).transpose(0, 1).reshape(
+                B, C, self.window_size[0] * self.window_size[1], H, W
+            )
 
-
-        # kv = kv.flatten(0, 1).repeat((self.window_size[0]*self.window_size[1], 1, 1, 1))
-        # kv = F.grid_sample(kv, self.trans_grid, mode='nearest', align_corners=False).reshape(
-        #     self.window_size[0]*self.window_size[1], B, 2*C, H, W
-        # ).permute(1, 2, 0, 3, 4)
-
-
-        # q: B C H W kv: B 2C H W
-        # kv = self.padding(kv).unsqueeze(2)
-        # # kv: B 2C 1 H W
-        # kv = torch.cat(
-        #     [kv[..., i // self.window_size[0]:i // self.window_size[0] + H,
-        #      i % self.window_size[0]:i % self.window_size[0] + W]
-        #      for i in range(self.window_size[0] * self.window_size[1])
-        #      ], dim=2
-        # )
-        # k, v = torch.split(kv, C, dim=1)  # B C w*w H W
-
-        # attn_map = torch.mul(q.unsqueeze(2) * self.scale,
-        #                      k).reshape(B, self.num_heads, C//self.num_heads,
-        #                                 self.window_size[0]*self.window_size[1], H, W).sum(dim=2, keepdim=False)
-        # # Batch, num_heads, w*w, Hp, Wp
-        # relative_position_bias = self.relative_position_bias_table.permute(1, 0).view(
-        #     1, self.num_heads, self.window_size[0] * self.window_size[1], 1, 1
-        # )
-        # attn_map += relative_position_bias
-        # attn_map = self.softmax(attn_map)
-        # x = torch.sum(v.reshape(B, self.num_heads, C//self.num_heads, self.window_size[0]*self.window_size[1],
-        #                         H, W) * attn_map.unsqueeze(2), dim=3).reshape(B, C, H, W)
+            v = v.flatten(0, 1).unsqueeze(0).expand((self.window_size[0] * self.window_size[1], -1, -1, -1))
+            v = F.grid_sample(v, self.trans_grid, mode='nearest', align_corners=False).transpose(0, 1).reshape(
+                B, C, self.window_size[0] * self.window_size[1], H, W
+            )
+            attn_map = torch.mul(q.unsqueeze(2) * self.scale,
+                                 k).reshape(B, self.num_heads, C // self.num_heads,
+                                            self.window_size[0] * self.window_size[1], H, W).sum(dim=2, keepdim=False)
+            # Batch, num_heads, w*w, Hp, Wp
+            relative_position_bias = self.relative_position_bias_table.permute(1, 0).view(
+                1, self.num_heads, self.window_size[0] * self.window_size[1], 1, 1
+            )
+            attn_map += relative_position_bias
+            attn_map = self.softmax(attn_map)
+            x = torch.sum(v.reshape(B, self.num_heads, C // self.num_heads, self.window_size[0] * self.window_size[1],
+                                    H, W) * attn_map.unsqueeze(2), dim=3).reshape(B, C, H, W)
 
         x = self.proj(x)
         x = self.proj_drop(x)
@@ -190,7 +170,7 @@ class convAttention(nn.Module):
 
         assert q.shape == k.shape and len(q.shape) == 5, "input feature has wrong size"
         B, num_heads, dim_per_head, H, W = q.shape
-        out_dim = self.window_size[0]*self.window_size[1]
+        out_dim = self.window_size[0] * self.window_size[1]
         k_padding = self.padding(
             k.flatten(0, 1)
         ).view(B, self.num_heads, dim_per_head,
@@ -202,7 +182,7 @@ class convAttention(nn.Module):
              for i in range(self.window_size[0] * self.window_size[1])
              ], dim=3
         )  # Batch, num_heads, dim//num_heads, w*w, Hp, Wp
-        attn_map = torch.mul(q.unsqueeze(3)*self.scale, k).sum(dim=2, keepdim=False)
+        attn_map = torch.mul(q.unsqueeze(3) * self.scale, k).sum(dim=2, keepdim=False)
         # Batch, num_heads, w*w, Hp, Wp
         relative_position_bias = self.relative_position_bias_table.permute(1, 0).view(
             1, self.num_heads, self.window_size[0] * self.window_size[1], 1, 1
@@ -314,7 +294,7 @@ class PatchMerging(nn.Module):
 
 
 class convTransformer(nn.Module):
-    def __init__(self, in_chans=3, num_classes=10, embed_dim=96, depths=[2, 2, 6, 2], num_heads=[3, 6, 12, 24],
+    def __init__(self, in_chans=3, num_classes=10, embed_dim=96, depths=(2, 2, 6, 2), num_heads=(3, 6, 12, 24),
                  window_size=7, drop_path_rate=0.1, norm_layer=nn.LayerNorm, B=32, patch_resolution=(56, 56)):
         super().__init__()
         self.num_classes = num_classes
@@ -374,11 +354,53 @@ if __name__ == '__main__':
     # b = c(a)
     # print(time.time() - t)
     # summary(c, (3, 224, 224), batch_size=8)
-    a = convAttention(dim=96, num_heads=3, win_size=(7, 7), default_shape=(2, 24, 24)).cuda()
-    for _ in range(100):
-        b = torch.rand(2, 96, 24, 24).cuda()
-        a(b)
+    # a = convAttention(dim=96, num_heads=3, win_size=(7, 7), default_shape=(2, 24, 24)).cuda()
+    # for _ in range(100):
+    #     b = torch.rand(2, 96, 24, 24).cuda()
+    #     a(b)
+    net = convTransformer(num_classes=10, embed_dim=96, window_size=7, depths=[2, 2, 6, 2],
+                          num_heads=[3, 6, 12, 24]).cuda()
+    # net = nn.Sequential(
+    #     *[convAttention(dim=96, num_heads=3, win_size=(7, 7), default_shape=(2, 24, 24)).cuda() for _ in range(1)]
+    # )
+    # net = convAttention(dim=96, num_heads=3, win_size=(7, 7), default_shape=(2, 24, 24)).cuda()
+    optimizer = torch.optim.AdamW(net.parameters(), lr=0.001)
+    # net, optimizer = amp.initialize(net, optimizer, opt_level='O1')
+    for _ in range(10):
+        x = torch.rand(1, 3, 224, 224, requires_grad=True).cuda()
+        net.eval()
 
-
-
-
+        # x = torch.rand(1, 96, 56, 56, requires_grad=True).cuda()
+        y = net(x)
+        l = y.mean()
+        # with amp.scale_loss(l, optimizer) as scaled_loss:
+        #     scaled_loss.backward()
+        l.backward()
+        # x_g = x.grad
+        # net.zero_grad()
+        # x.grad.zero_()
+        grad = []
+        for m in net.modules():
+            if hasattr(m, 'weight') and m.weight.grad is not None:
+                grad.append([m.weight.grad.clone(), m.__repr__()])
+        net.zero_grad()
+        for m in net.modules():
+            if isinstance(m, convAttention):
+                m.pattern = 'af'
+        yaf = net(x.detach().clone())
+        laf = yaf.mean()
+        # with amp.scale_loss(laf, optimizer) as scaled_loss:
+        #     scaled_loss.backward()
+        laf.backward()
+        gradaf = []
+        for m in net.modules():
+            if hasattr(m, 'weight') and m.weight.grad is not None:
+                gradaf.append([m.weight.grad.clone(), m.__repr__()])
+        for a, b in zip(grad, gradaf):
+            print(torch.allclose(a[0], b[0]), torch.max(torch.abs(a[0] - b[0]) / torch.abs(a[0])), a[1]) if a[1] == b[1] \
+                else print(a[1], b[1])
+        # x_gaf = x.grad
+        net.zero_grad()
+        print('check output:', torch.allclose(y, yaf, atol=1e-5), torch.max(torch.abs(y - yaf) / torch.abs(y)))
+        # print(torch.allclose(attn, attnaf, atol=1e-5), torch.max(torch.abs(attn - attnaf)/torch.abs(attn)))
+        print('\n')
