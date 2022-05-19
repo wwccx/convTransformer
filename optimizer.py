@@ -11,7 +11,7 @@ def build_optimizer(config, model):
         parameters = set_weight_decay(model, skip_keywords)
 
         optimizer = optim.AdamW(parameters, eps=1e-8, betas=(0.9, 0.999),
-                            lr=1.25e-4, weight_decay=0.05, amsgrad=True)
+                            lr=1.25e-4, weight_decay=0.05, amsgrad=True)  # 1.25e-4
     elif _optim.lower() == 'attcg':
         optimizer = ATTCG(model.parameters(), lr=1.25e-4) 
     return optimizer

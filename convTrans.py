@@ -139,7 +139,7 @@ class convAttention(nn.Module):
         relative_position_bias = self.relative_position_bias_table.permute(1, 0).view(
             1, self.num_heads, self.window_size[0] * self.window_size[1], 1, 1
         )
-        attn_map += relative_position_bias * 0
+        attn_map += relative_position_bias
         attn_map = self.softmax(attn_map)
         x = applyAttnModelFunction.apply(attn_map, vp, shapeInfo)
         # k = k.flatten(0, 1).unsqueeze(0).expand((self.window_size[0]*self.window_size[1], -1, -1, -1))

@@ -13,6 +13,8 @@ from load_dataset import build_dataset
 from lr_scheduler import build_scheduler
 from swin_transformer import SwinTransformer
 from optimizer_swin import build_optimizer as swin_optim
+from timm.data import Mixup
+from timm.loss import SoftTargetCrossEntropy
 from apex import amp
 from rich.progress import (
     BarColumn,
@@ -33,6 +35,7 @@ parser.add_argument("--check_point", type=str, default='')
 parser.add_argument("--optim", type=str, default='attcg')
 parser.add_argument('--amp_level', type=str, default='O1', choices=['O0', 'O1', 'O2'],
                     help='mixed precision opt level, if O0, no amp is used')
+parser.add_argument("--mixup", type=bool, default=False)
 opt = parser.parse_args()
 
 
@@ -74,8 +77,15 @@ class gqTrain:
         self.lr = np.array([])
         self.grad = np.array([])
         self.maxAcc = 0
-        self.lossFun = torch.nn.CrossEntropyLoss()
+        if not opt.mixup:
+            self.lossFun = torch.nn.CrossEntropyLoss()
+        else:
+            self.lossFun = SoftTargetCrossEntropy()
         self.gradNormVal = 0
+        self.mixup = Mixup(mixup_alpha=0.8, cutmix_alpha=1.0, cutmix_minmax=None,
+                      prob=1.0, switch_prob=0.5, mode='batch',
+                      label_smoothing=0.1, num_classes=1000
+                      )
         if check_point:
             self.saveDir = check_point
             logging.info('resuming path:' + self.saveDir)
@@ -101,6 +111,8 @@ class gqTrain:
         for img, target in self.trainDataLoader:
             target = target.to(self.device)
             img = img.to(self.device)
+            if opt.mixup:
+                img, target = self.mixup(img, target)
             target_pre = self.network(img)
 
             loss = self.lossFun(target_pre, target)
@@ -213,7 +225,8 @@ class gqTrain:
                     accuracy = self.validate(p=p)
                 if accuracy > self.maxAcc or (i + 1) % 10 == 0:
                     self.maxAcc = max(accuracy, self.maxAcc)
-                    self.save(self.currentEpoch, accuracy)
+                
+                self.save(self.currentEpoch, accuracy)
                 self.acc_value = np.append(self.acc_value, accuracy.cpu().detach().numpy())
                 self.network.train()
                 for p in self.optimizer.param_groups:
@@ -239,14 +252,19 @@ class gqTrain:
             self.currentEpoch = check_point['epoch'] + 1
             self.maxAcc = max(self.maxAcc, check_point['accuracy'])
             try:
-                self.acc_value = check_point['accuracy_hist']
-                self.loss_value = check_point['loss_hist']
-                self.lr = check_point['lr_hist']
-                self.grad = check_point['grid_hist']
+                # self.acc_value = check_point['accuracy_hist']
+                # self.loss_value = check_point['loss_hist']
+                # self.lr = check_point['lr_hist']
+                # self.grad = check_point['grid_hist']
+                self.acc_value = check_point['acc']
+                self.loss_value = check_point['loss']
+                self.lr = check_point['lr']
+                self.grad = check_point['grid']
             except:
                 # self.acc_value = np.load(os.path.join(save_path, 'acc_value.npy'))
                 # self.loss_value = np.load(os.path.join(save_path, 'loss_value.npy'))
                 # self.lr = np.load(os.path.join(save_path, 'lr_value.npy'))
+                self.grad = np.array([])
                 pass
         else:
             raise FileNotFoundError('No check points in the path!')
