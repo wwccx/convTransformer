@@ -54,8 +54,13 @@ class gqTrain:
 
         logging.info('data set loaded')
         if 'convTrans' in opt.model:
-            self.network = convTransformer(B=opt.batch_size,
-                    num_classes=1000).to(self.device)
+            if 'vib' in opt.dataset:
+                self.network = convTransformer(num_classes=2, in_chans=1, window_size=(1, 3),
+                                               patch_embedding_size=(1, 32), patch_merging_size=(1, 2),
+                                               ).to(self.device)
+            else:
+                self.network = convTransformer(B=opt.batch_size,
+                                               num_classes=10).to(self.device)
             self.optimizer = build_optimizer(opt, self.network)
         elif 'res' in opt.model:
             self.network = models.resnet50(num_classes=10).to(self.device)
@@ -109,12 +114,13 @@ class gqTrain:
         # if task_id:
             # self.progress.start_task(task_id)
         for img, target in self.trainDataLoader:
-            target = target.to(self.device)
+            target = target.to(self.device).squeeze()
             img = img.to(self.device)
             if opt.mixup:
                 img, target = self.mixup(img, target)
             target_pre = self.network(img)
-
+            # print(target_pre.shape)
+            # print(target.shape)
             loss = self.lossFun(target_pre, target)
             self.loss_value = np.append(self.loss_value, loss.item())
             self.lr = np.append(self.lr, self.optimizer.param_groups[0]['lr'])
@@ -175,7 +181,10 @@ class gqTrain:
             target = target.to(self.device)
             img = img.to(self.device)
             target_pre = self.network(img)
-            target_pre = torch.argmax(target_pre, dim=1)
+
+            target_pre = torch.argmax(target_pre, dim=1, keepdim=True)
+            # print(target_pre.shape, target.shape)
+            # print(target_pre, target)
             judge_tensor = (target_pre == target)
             total_pre += len(target)
             success_pre += torch.sum(judge_tensor)
@@ -219,14 +228,14 @@ class gqTrain:
             p = self.make_progress('train')
             with p as x:
                 self.train(p=x)
+                # pass
             if i % 1 == 0:
                 p = self.make_progress('val')
                 with p:
                     accuracy = self.validate(p=p)
                 if accuracy > self.maxAcc or (i + 1) % 10 == 0:
                     self.maxAcc = max(accuracy, self.maxAcc)
-                
-                self.save(self.currentEpoch, accuracy)
+                    self.save(self.currentEpoch, accuracy)
                 self.acc_value = np.append(self.acc_value, accuracy.cpu().detach().numpy())
                 self.network.train()
                 for p in self.optimizer.param_groups:
@@ -281,7 +290,7 @@ class gqTrain:
             img = img.to(self.device)
             t = time.time()
             target_pre = self.network(img)
-            # torch.cuda.synchronize()
+            torch.cuda.synchronize()
             print(time.time() - t)
             loss = self.lossFun(target_pre, target)
             # self.loss_value = np.append(self.loss_value, loss.item())
@@ -356,8 +365,8 @@ class gqTrain:
 
 if __name__ == '__main__':
     gqTrain = gqTrain()
-    gqTrain.run(epoch=opt.n_epochs)
-    # gqTrain.test_train()
+    # gqTrain.run(epoch=opt.n_epochs)
+    gqTrain.test_train()
 
 
 

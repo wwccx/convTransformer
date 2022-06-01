@@ -23,7 +23,14 @@ applyAttnBackward = load(name="applyAttnBackward",
                          extra_include_paths=["include"],
                          sources=["./cpp/applyAttnBackward.cpp", "./kernel/applyAttnBackward.cu"],
                          verbose=True)
-
+# python -m torch.distributed.launch main.py --cfg ./configs/conv_tiny_patch4_window7_224.yaml --local_rank 0
+# --data-path /home/server/convTransformer/data/imagenet/ILSVRC/Data/CLS-LOC --batch-size 128 --use-checkpoint True
+# --tag cudaExtendWinSize7AddQscale --amp-opt-level O1
+'''
+python -m torch.distributed.launch main.py --cfg ./configs/conv_tiny_patch4_window7_224.yaml --local_rank 0
+--data-path /home/server/convTransformer/data/imagenet/ILSVRC/Data/CLS-LOC
+--batch-size 128 --use-checkpoint True --tag cudaExtendWinSize7AddQscale --amp-opt-level O1
+'''
 
 class convAttnModelFunction(Function):
     @staticmethod
@@ -135,7 +142,7 @@ class convAttention(nn.Module):
             relative_position_bias = self.relative_position_bias_table.permute(1, 0).view(
                 1, self.num_heads, self.window_size[0] * self.window_size[1], 1, 1
             )
-            attn_map += relative_position_bias * 0
+            attn_map += relative_position_bias
             attn_map = self.softmax(attn_map)
             x = applyAttnModelFunction.apply(attn_map, vp, shapeInfo)
         else:
@@ -262,7 +269,7 @@ class BasicLayer(nn.Module):
         self.blocks = nn.ModuleList([
             ConvTransBlock(dim,
                            num_heads=num_heads,
-                           win_size=(win_size, win_size),
+                           win_size=win_size,
                            conv_dim_ratio=conv_dim_ratio,
                            attn_drop=attn_drop,
                            conv_drop=conv_drop,
@@ -282,9 +289,9 @@ class BasicLayer(nn.Module):
 
 
 class PatchMerging(nn.Module):
-    def __init__(self, dim):
+    def __init__(self, dim, patch_merging_size=(2, 2)):
         super(PatchMerging, self).__init__()
-        self.conv = nn.Conv2d(dim, dim*2, kernel_size=2, stride=2)
+        self.conv = nn.Conv2d(dim, dim*2, kernel_size=patch_merging_size, stride=patch_merging_size)
         self.norm = nn.LayerNorm(dim)
 
     def forward(self, x):
@@ -295,11 +302,13 @@ class PatchMerging(nn.Module):
 
 class convTransformer(nn.Module):
     def __init__(self, in_chans=3, num_classes=10, embed_dim=96, depths=(2, 2, 6, 2), num_heads=(3, 6, 12, 24),
-                 window_size=7, drop_path_rate=0.1, norm_layer=nn.LayerNorm, B=32, patch_resolution=(56, 56)):
+                 patch_embedding_size=(4, 4), patch_merging_size=(2, 2),
+                 window_size=(7, 7), drop_path_rate=0.1, norm_layer=nn.LayerNorm, B=32, patch_resolution=(56, 56)):
         super().__init__()
         self.num_classes = num_classes
 
-        self.patch_embed = patchEmbedding(in_chans=in_chans, embed_dim=embed_dim, norm_layer=nn.BatchNorm2d)
+        self.patch_embed = patchEmbedding(in_chans=in_chans, embed_dim=embed_dim, norm_layer=nn.BatchNorm2d,
+                                          patch_size=patch_embedding_size)
 
         self.layers = nn.ModuleList()
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]
@@ -314,7 +323,7 @@ class convTransformer(nn.Module):
                                attn_drop=0,
                                drop_path=dpr[sum(depths[:i]):sum(depths[:i + 1])],
                                default_shape=(B, int(patch_resolution[0]*2**(-i)), int(patch_resolution[1]*2**(-i))),
-                               downsample=PatchMerging(embed_dim * 2 ** i)
+                               downsample=PatchMerging(embed_dim * 2 ** i, patch_merging_size=patch_merging_size)
                                if i + 1 < len(depths) else None
                                )
             self.layers.append(layer)
@@ -354,20 +363,20 @@ if __name__ == '__main__':
     # b = c(a)
     # print(time.time() - t)
     # summary(c, (3, 224, 224), batch_size=8)
-    # a = convAttention(dim=96, num_heads=3, win_size=(7, 7), default_shape=(2, 24, 24)).cuda()
+    # net = convAttention(dim=96, num_heads=3, win_size=(3, 5), default_shape=(2, 24, 24)).cuda()
     # for _ in range(100):
     #     b = torch.rand(2, 96, 24, 24).cuda()
     #     a(b)
-    net = convTransformer(num_classes=10, embed_dim=96, window_size=7, depths=[2, 2, 6, 2],
+    net = convTransformer(num_classes=10, embed_dim=96, window_size=(3, 7), depths=[2, 2, 6, 2],
                           num_heads=[3, 6, 12, 24]).cuda()
-    # net = nn.Sequential(
-    #     *[convAttention(dim=96, num_heads=3, win_size=(7, 7), default_shape=(2, 24, 24)).cuda() for _ in range(1)]
-    # )
-    # net = convAttention(dim=96, num_heads=3, win_size=(7, 7), default_shape=(2, 24, 24)).cuda()
+
     optimizer = torch.optim.AdamW(net.parameters(), lr=0.001)
     # net, optimizer = amp.initialize(net, optimizer, opt_level='O1')
+    # x = torch.rand(1, 3, 5, 5, requires_grad=True).cuda()
     for _ in range(10):
         x = torch.rand(1, 3, 224, 224, requires_grad=True).cuda()
+        # x = torch.rand(1, 96, 56, 56, requires_grad=True).cuda()
+        # x = torch.ones(1, 3, 5, 5)
         net.eval()
 
         # x = torch.rand(1, 96, 56, 56, requires_grad=True).cuda()
@@ -397,7 +406,7 @@ if __name__ == '__main__':
             if hasattr(m, 'weight') and m.weight.grad is not None:
                 gradaf.append([m.weight.grad.clone(), m.__repr__()])
         for a, b in zip(grad, gradaf):
-            print(torch.allclose(a[0], b[0]), torch.max(torch.abs(a[0] - b[0]) / torch.abs(a[0])), a[1]) if a[1] == b[1] \
+            print(torch.allclose(a[0], b[0]), torch.max(torch.abs(a[0] - b[0]) / torch.max(a[0])), a[1]) if a[1] == b[1] \
                 else print(a[1], b[1])
         # x_gaf = x.grad
         net.zero_grad()

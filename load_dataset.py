@@ -2,6 +2,8 @@ from torchvision import datasets
 import torch.utils.data as D
 import torchvision.transforms as dataTransforms
 import os
+import torch
+
 
 def build_dataset(name, batch_size, data_path, transform=None):
     dataset_dict = {
@@ -59,7 +61,19 @@ def build_dataset(name, batch_size, data_path, transform=None):
         v = D.DataLoader(val_data, batch_size=batch_size, shuffle=True,
                 num_workers=12)
         return t, v
-
+    elif 'vibration' in name.lower():
+        from viDataloader import VibrationDataset
+        seed = 42
+        torch.manual_seed(seed)  # 设置 cpu 的随机数种子
+        torch.cuda.manual_seed(seed)  # 对于单张显卡，设置 gpu 的随机数种子
+        # negative_channels = torch.randperm(301)
+        negative_channels = torch.arange(301)
+        positive_channels = torch.randperm(140)
+        train_data = VibrationDataset((positive_channels[0:119], negative_channels[31:]))
+        val_data = VibrationDataset((positive_channels[119:], negative_channels[:31]))
+        t = D.DataLoader(batch_size=batch_size, dataset=train_data, num_workers=12)
+        v = D.DataLoader(batch_size=batch_size, dataset=val_data, num_workers=12)
+        return t, v
     else:
         raise NotImplementedError('Only support MINST and CIFAR10')
 
