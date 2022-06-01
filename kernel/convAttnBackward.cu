@@ -40,7 +40,7 @@ __global__ void convAttnBackward(float* gQ,
             }
         }
         gQ[qIdx] = sumQ;
-        gK[kIdx + (winw / 2) * (H + winh - 1) + winw / 2] = sumK;
+        gK[kIdx + (winh / 2) * (W + winw - 1) + winw / 2] = sumK;
     }
 }
 

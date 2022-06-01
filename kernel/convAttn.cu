@@ -41,7 +41,7 @@ void launch_convAttn(float* attnMap,
                      int C,
                      int H,
                      int W) {
-    dim3 grid((H * W + 31)/32, win*win, (B * Heads + 31) / 32);
+    dim3 grid((H * W + 31)/32, winh*winw, (B * Heads + 31) / 32);
     dim3 block(32, 1, 32);
     convAttn<<<grid, block>>>(attnMap, q, k, B, Heads, winh, winw, C, H, W);
 }

@@ -25,7 +25,7 @@ __global__ void applyAttn(float* output,
 
         float sum = 0;
         for (int i = 0; i < winh * winw; i++) {
-            sum += attnMap[mapIdx + i * resoMap] * V[vIdx + (i / winw) * (W + winw - 1) + i % win];
+            sum += attnMap[mapIdx + i * resoMap] * V[vIdx + (i / winw) * (W + winw - 1) + i % winw];
 //             sum += V[vIdx + i * resoV + (i / win) * (W + win - 1) + i % win];
         }
         output[(batchIdx * embedDim + dimIdx) * resoMap + pixelIdx] = sum;

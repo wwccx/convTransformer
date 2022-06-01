@@ -1,7 +1,10 @@
 import cv2
+import numpy
 import torch
 import numpy as np
-
+from hardware.camera import RS
+from hardware.Ursocket import UrSocket
+from torch.utils.cpp_extension import load
 
 class Image(object):
     def __init__(self, depth, camera_pos, rgb=None, camera_intr=None):
@@ -9,15 +12,16 @@ class Image(object):
          create an image object
         :param depth: ndarray: (H, W)
         :param camera_pos: ndarray: (4, 4) transformation matrix
-        :param rgb: ndarray: (3, H, W)
+        :param rgb: ndarray: (H, W, 3)
         :param camera_pos: ndarray: (3, 3) camera intrinsic matrix
         """
-        self.depth_raw = depth
+        self.depth_raw = self.in_paint(depth)
+        # self.depth_raw = depth
         self.H, self.W = depth.shape
         if rgb is not None:
             self.rgb_raw = rgb
         else:
-            self.rgb_raw = np.zeros((3, self.H, self.W)).astype(np.float32)
+            self.rgb_raw = np.zeros((self.H, self.W, 3)).astype(np.float32)
 
         self.camera_pos = camera_pos if camera_pos is not None else np.eye(4)
         self.camera_intr = camera_intr
@@ -57,27 +61,47 @@ class Image(object):
         else:
             raise TypeError('The image data must be np.ndarray or torch.Tensor')
 
+    @staticmethod
+    def in_paint(depth_img, val=0):
+        depth_img = np.array(depth_img).astype(np.float32)
+        depth_img = cv2.copyMakeBorder(depth_img, 10, 10, 10, 10, cv2.BORDER_DEFAULT)
+        mask = (depth_img == val).astype(np.uint8)
+
+        depth_img = depth_img.astype(np.float32)  # Has to be float32, 64 not supported.
+        depth_img = cv2.inpaint(depth_img, mask, 1, cv2.INPAINT_NS)
+        # Back to original size and value range.
+        depth_img = depth_img[10:-10, 10:-10]
+
+        return depth_img
+
 
 class TSDF(object):
     def __init__(self, vpm, volume_size):
         """
 
-        :param vpm: int voxels per meter
-        :param volume_size: st the whole volume of scene (in meter)
+        :param vpm: int, voxels per meter
+        :param volume_size: ndarray, the whole volume of scene (in meter)
         """
+        self.volume_size = torch.from_numpy(volume_size).cuda()
         self.device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
-        self.volumeTSDF = torch.ones(list((volume_size * vpm).astype(np.int))).to(self.device)
-        self.volumeCoordinate = torch.ones(list(np.append(volume_size, 3).astype(np.int))).to(self.device)
-        self.volumeRGB = torch.zeros(list(np.append(volume_size, 3).astype(np.int))).to(self.device).to(torch.float32)
-        self.volumeCameraDis = torch.zeros(list((volume_size * vpm).astype(np.int))).to(self.device)
+        self.volumeTSDF = torch.ones(list((volume_size * vpm).astype(int))).to(self.device).to(torch.float32)
+        # self.volumeCoordinate = torch.ones(list(np.append(volume_size, 3).astype(np.int))).to(self.device)
+        self.volumeRGB = torch.zeros(
+            list(np.append(volume_size * vpm, 3).astype(int))
+        ).to(self.device).to(torch.float32)
+        self.volumeCameraDis = torch.zeros(list((volume_size * vpm).astype(int))).to(self.device)
         # the distance along the z-axis between camera and voxel
-
+        self.volume_origin = torch.tensor([-0.8, -0.4, -0.01]).cuda()
         indexCoor = torch.meshgrid(*[torch.arange(i) for i in (volume_size * vpm)])
         indexCoor = torch.cat([x.unsqueeze(-1) for x in indexCoor], dim=-1).to(self.device)  # L H W 3 (x y z)
-        self.baseCoor = indexCoor / vpm  # indexCoor in base shape: (L H W 3)
+        self.baseCoor = indexCoor / vpm + self.volume_origin  # indexCoor in base shape: (L H W 3)
         # cameraCoor = inv(cameraPos) @ baseCoor
         # cameraPixelIndex = cameraIntr @ cameraCoor/cameraCoor.z
         self.voxelSize = 1 / vpm
+        self._rendering_cuda = load(name="rendering",
+                                    extra_include_paths=["include"],
+                                    sources=["./cpp/rendering.cpp", "./kernel/rendering.cu"],
+                                    verbose=True)
 
     @torch.no_grad()
     def integrate(self, image):
@@ -102,12 +126,13 @@ class TSDF(object):
 
         validVoxelIndexCoor = torch.where(
             torch.logical_and(
-                torch.logical_and(0 <= cameraPixelIndexCoor[..., 0], cameraPixelIndexCoor[..., 0] < image.W),
-                torch.logical_and(0 <= cameraPixelIndexCoor[..., 1], cameraPixelIndexCoor[..., 1] < image.H)
+                torch.logical_and(0 <= cameraPixelIndexCoor[..., 0], cameraPixelIndexCoor[..., 0] < 1 * image.W),
+                torch.logical_and(0 <= cameraPixelIndexCoor[..., 1], cameraPixelIndexCoor[..., 1] < 1 * image.H)
             )
         )  # tuple of index, (x, y, z)
         validCameraPixelIndex = cameraPixelIndexCoor[validVoxelIndexCoor][:, :2].to(torch.long)
         # (N 3) -> (N 2) (pixel_x, pixel_y, | 1)
+        self.volumeCameraDis = torch.zeros_like(self.volumeTSDF)
         self.volumeCameraDis[validVoxelIndexCoor] = image.depth_raw[validCameraPixelIndex[:, 1],
                                                                     validCameraPixelIndex[:, 0]].to(torch.float32)
 
@@ -115,21 +140,194 @@ class TSDF(object):
                                  min=-5 * self.voxelSize, max=5 * self.voxelSize) / (5 * self.voxelSize)
         self.volumeTSDF[validVoxelIndexCoor] = self.volumeTSDF[validVoxelIndexCoor] * 0.2 + depth_diff[
             validVoxelIndexCoor] * 0.8
-        self.volumeRGB[validVoxelIndexCoor] = self.volumeTSDF[
-                                                  validVoxelIndexCoor] * 0.2 + image.rgb_raw[
-                                                  validCameraPixelIndex[:, 1], validCameraPixelIndex[:, 0]] * 0.8
+        self.volumeRGB[validVoxelIndexCoor] = self.volumeRGB[
+                                                  validVoxelIndexCoor
+                                              ] * 0.2 + image.rgb_raw[
+                                                        validCameraPixelIndex[:, 1], validCameraPixelIndex[:, 0], :
+                                                        ] * 0.8
+
+    @torch.no_grad()
+    def rendering(self, camera_extrinsic, camera_intrinsic, shape=None):
+        """
+        render the volume into an image
+        :param camera_extrinsic: ndarray, tensor, shape (4, 4) camera extrinsic matrix
+        :param camera_intrinsic: ndarray, tensor, shape (3, 3) camera intrinsic matrix
+        :return: tensor, rendered image
+        """
+        try:
+            if isinstance(camera_extrinsic, numpy.ndarray):
+                camera_extrinsic = torch.from_numpy(camera_extrinsic).to(self.device)
+                camera_intrinsic = torch.from_numpy(camera_intrinsic).to(self.device)
+            elif camera_extrinsic.device() != self.device:
+                camera_extrinsic = camera_extrinsic.to(self.device)
+                camera_intrinsic = camera_intrinsic.to(self.device)
+
+            camera_extrinsic = camera_extrinsic.to(torch.float32)
+            camera_intrinsic = camera_intrinsic.to(torch.float32)
+
+        except Exception:
+            raise TypeError("camera_extrinsic should be ndarray or tensor")
+        # baseCoor = torch.cat([self.baseCoor, torch.ones_like(self.volumeTSDF).unsqueeze(-1)], dim=-1)
+        # cameraCoor = torch.matmul(
+        #     torch.inverse(camera_extrinsic).to(torch.float32), baseCoor.unsqueeze(-1)
+        # )  # (L H W 4 1)
+        # cameraCoorZ = cameraCoor[:, :, :, 2:3, :]  # (L H W 1 1)
+        # cameraPixelIndexCoor = torch.floor(torch.matmul(camera_intrinsic,
+        #                                                 cameraCoor[..., :3, :] / cameraCoorZ)).squeeze()
+        # # get the corresponding pixel index of each voxel  (3 3) @ (L H W 3 1) = (L H W 3 1) = (L H W 3)
+        # validVoxelIndexCoor = torch.where(
+        #     torch.logical_and(
+        #         torch.logical_and(0 <= cameraPixelIndexCoor[..., 0],
+        #                           cameraPixelIndexCoor[..., 0] < 2 * camera_intrinsic[0, 2]),
+        #         torch.logical_and(0 <= cameraPixelIndexCoor[..., 1],
+        #                           cameraPixelIndexCoor[..., 1] < 2 * camera_intrinsic[1, 2])
+        #     )
+        # )  # tuple of index, (x, y, z)
+        #
+        # rendering_image = torch.ones((int(2 * camera_intrinsic[0, 2]), int(2 * camera_intrinsic[1, 2])))
+        #
+        # for i in range(len(validVoxelIndexCoor[0])):
+        #     x = validVoxelIndexCoor[0][i].to(torch.long)
+        #     y = validVoxelIndexCoor[1][i].to(torch.long)
+        #     z = validVoxelIndexCoor[2][i].to(torch.long)
+        #     u, v = cameraPixelIndexCoor[x, y, z, :2].to(torch.long)
+        #     z_depth = cameraCoorZ[x, y, z]
+        #     if self.volumeTSDF[x, y, z] < 0 and z_depth < rendering_image[u, v]:
+        #         rendering_image[u, v] = z_depth
+        #     print('rendering:', i/len(validVoxelIndexCoor[0]))
+        #
+        # return rendering_image
+        if not shape:
+            shape = (int(2 * camera_intrinsic[1, 2]), int(2 * camera_intrinsic[0, 2]))  # (H, W)
+        H, W = shape
+        origin = camera_extrinsic[:3, 3:4].unsqueeze(0)  # B, 3, 1
+        pixel_index = torch.stack(
+            torch.meshgrid(torch.arange(H), torch.arange(W)), dim=-1
+        ).unsqueeze(0).expand(origin.shape[0], H, W, 2).to(self.device)  # B, H, W, 2
+        pixel_index = torch.cat(
+            [pixel_index[..., 1:2], pixel_index[..., 0:1], torch.ones_like(pixel_index[..., :1])], dim=-1
+        ).to(torch.float32)  # B, H, W, 3
+
+        inv_intr = torch.inverse(camera_intrinsic).expand((origin.shape[0], 1, 1, 3, 3))  # B, 1, 1, 3, 3
+        direction = torch.matmul(inv_intr, pixel_index.unsqueeze(-1))  # B, H, W, 3, 1
+        direction = torch.cat(
+            [direction, torch.ones_like(direction[..., -1:, :])], dim=-2
+        )  # B, H, W, 4, 1
+        direction = camera_extrinsic.expand((origin.shape[0], 1, 1, 4, 4)) @ direction
+        # B, 3, 3 @ B, H, W, 3, 1 = B, H, W, 3, 1
+        direction = direction[..., :3, :] - origin.expand((origin.shape[0], 1, 1, 3, 1))  # B, H, W, 3
+        direction = direction * self.voxelSize
+        direction = torch.cat([direction, torch.zeros_like(direction) + origin.expand((origin.shape[0], 1, 1, 3, 1))],
+                              dim=-2)  # B, H, W, 6, 1
+        image = self._render(origin.squeeze().to(torch.float32), direction.squeeze(), shape)
+        return image
+
+    def _render(self, origin, direction, shape):
+        B = 1
+        H, W = shape
+        xmin, ymin, zmin = self.volume_origin.cpu().numpy()
+        xmax, ymax, zmax = self.volume_origin.cpu().numpy() + self.volume_size.cpu().numpy()
+        image = torch.zeros(B, H, W).to(self.device).to(torch.float32)
+        vL, vH, vW = self.volumeTSDF.shape
+        self._rendering_cuda.rendering(image, direction, origin, self.volumeTSDF, B,
+                                       H, W, vH, vW, int(0.999 + 1/self.voxelSize), self.voxelSize,
+                                       xmin, xmax, ymin, ymax, zmin, zmax)
+        return image, direction, origin
+
+
+def vec2mat(rot_vec, trans_vec):
+    """
+    :param rot_vec: list_like [a, b, c]
+    :param trans_vec: list_like [x, y, z]
+    :return: transform mat 4*4
+    """
+    theta = np.linalg.norm(rot_vec, 2)
+    if theta:
+        rot_vec /= theta
+    out_operator = np.array([
+        [0, -rot_vec[2], rot_vec[1]],
+        [rot_vec[2], 0, -rot_vec[0]],
+        [-rot_vec[1], rot_vec[0], 0]
+    ])
+    rot_vec = np.expand_dims(rot_vec, 0)
+    rot_mat = np.cos(theta) * np.eye(3) + (1 - np.cos(theta)) * rot_vec.T.dot(rot_vec) + np.sin(
+        theta) * out_operator
+
+    trans_vec = np.expand_dims(trans_vec, 0).T
+
+    trans_mat = np.vstack(
+        (np.hstack((rot_mat, trans_vec)), [0, 0, 0, 1])
+    )
+
+    return trans_mat
 
 
 if __name__ == '__main__':
-    v = TSDF(vpm=100, volume_size=np.array([1, 1, 1]))
+    vpm = 400
+    v = TSDF(vpm=vpm, volume_size=np.array([0.8, 0.8, 0.3]))
     import time
+    import open3d as o3d
+
+    from skimage import measure
+    rs = RS(640, 480)
+    # Ur = UrSocket()
+    init_pose = np.array([-0.3504593, -0.0419833473, 0.44227438, 2.1036984080, 2.250377223, 0.097387733])
+    # Ur.change_pose(init_pose)
+    Tcam2end = np.array([
+        [0.99770124, -0.06726973, -0.00818663, -0.02744465],
+        [0.06610884, 0.99272747, -0.10060715, -0.10060833],
+        [0.01489491, 0.09983467, 0.99489255, -0.15038112],
+        [0., 0., 0., 1., ]
+    ])
+
     t = time.time()
-    for i in range(1000):
-        a = Image(np.ones((480, 640)), np.eye(4),
-                  camera_intr=np.array([500, 0, 320, 0, 500, 240, 0, 0, 1]).reshape(3, 3))
+    img_num = 5
+    for i in range(img_num):
+        depth, rgb = rs.get_img()
+        # _ = rs.get_coordinate(240, 240)
+        pose = np.array([-0.3504593, -0.0419833473, 0.44227438, 2.1036984080, 2.250377223, 0.097387733])
+        print(pose)
+        Tend2base = vec2mat(pose[3:6], pose[0:3])
+        Tcam2base = np.matmul(Tend2base, Tcam2end)
+        a = Image(depth/1000, Tcam2base, rgb,
+                  camera_intr=np.array([614.887, 0, 328.328, 0, 614.955, 236.137, 0, 0, 1]).reshape(3, 3))
         v.integrate(a)
+        # Ur.change_pose(init_pose + np.array([0, -0.02, 0, 0, 0, 0])*i)
+        # Ur.change_pose(init_pose + np.array([-0.02, 0, 0, 0, 0, -0.1]) * 0)
+        # time.sleep(1)
         print(i)
     torch.cuda.synchronize()
-    print('fps:', 1000/(time.time() - t), 'seconds:', (time.time() - t))
+    print('fps:', img_num / (time.time() - t), 'seconds:', (time.time() - t))
+    volume = v.volumeTSDF.cpu().numpy()
+    # np.savez('volume.npz', **{'tsdf': volume, 'weight':np.ones_like(volume)})
+    rgb_volume = v.volumeRGB.cpu().numpy()
+    verts, faces, normals, values = measure.marching_cubes(volume)
+    vert_idx = np.round(verts).astype(int)
+    rgb_val = rgb_volume[vert_idx[:, 0], vert_idx[:, 1], vert_idx[:, 2], :] / 255
+    verts = verts / vpm + v.volume_origin.cpu().numpy()
+    pt = o3d.geometry.PointCloud()
+    pt.points = o3d.utility.Vector3dVector(verts)
+    pt.colors = o3d.utility.Vector3dVector(rgb_val)
+    # o3d.visualization.draw_geometries([pt])
+    pose = np.array([-0.3504593, -0.0419833473, 0.44227438, 2.1036984080, 2.250377223, 0.097387733])
+    print(pose)
+    Tend2base = vec2mat(pose[3:6], pose[0:3])
+    Tcam2base = np.matmul(Tend2base, Tcam2end)
+    h, w = 200, 200
+    img, dirt, origin = v.rendering(Tcam2base, np.array([614.887, 0, w // 2, 0, 614.955, h // 2, 0, 0, 1]).reshape(3, 3), (h, w))
+    img = img
+    from matplotlib import pyplot as plt
+    img1 = img.squeeze().cpu().numpy()
+    print(np.max(img1), np.min(img1))
+    plt.imshow(img1)
+    plt.show()
+    mesh = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(verts), o3d.utility.Vector3iVector(faces))
+    mesh.compute_vertex_normals()
+    mesh_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(
+        size=0.2, origin=[0, 0, 0])
+    mesh_frame1 = o3d.geometry.TriangleMesh.create_coordinate_frame(
+        size=0.2, origin=v.volume_origin.cpu().numpy())
+    o3d.visualization.draw_geometries([mesh, mesh_frame, mesh_frame1, pt])
+
 
 

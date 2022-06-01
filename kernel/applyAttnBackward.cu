@@ -38,7 +38,8 @@ __global__ void applyAttnBackward(float* gAttn,
                sumV += gX[xIdx + pixelBias] * Attn[attnIdx + i * resoX + pixelBias];
             }
         }
-        gV[vIdx + (winw / 2) * (H + winh - 1) + winw / 2] = sumV;
+        gV[vIdx + (winh / 2) * (W + winw - 1) + winw / 2] = sumV;
+        // the corresponding pixel index in V and X differs by (winh/2, winw/2)
         // (i / winw) * (W + winw - 1) + i % win
     }
 }
@@ -94,7 +95,7 @@ void launch_applyAttnBackward(float* gAttn,
     dim3 blockV(32, 1, 32);
     applyAttnBackward<<<gridV, blockV>>>(gAttn, gV, gX, Attn, V, B, Heads, winh, winw, C, H, W);
 
-    dim3 gridAttn((H * W + 31) / 32, win*win, (B * Heads + 31) / 32);
+    dim3 gridAttn((H * W + 31) / 32, winh*winw, (B * Heads + 31) / 32);
     dim3 blockAttn(32, 1, 32);
     applyAttnBackwardAttn<<<gridAttn, blockAttn>>>(gAttn, gX, Attn, V, B, Heads, winh, winw, C, H, W);
 }
