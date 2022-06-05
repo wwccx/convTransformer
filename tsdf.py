@@ -5,6 +5,8 @@ import numpy as np
 from hardware.camera import RS
 from hardware.Ursocket import UrSocket
 from torch.utils.cpp_extension import load
+import tf.transformations as tft
+
 
 class Image(object):
     def __init__(self, depth, camera_pos, rgb=None, camera_intr=None):
@@ -19,7 +21,7 @@ class Image(object):
         # self.depth_raw = depth
         self.H, self.W = depth.shape
         if rgb is not None:
-            self.rgb_raw = rgb
+            self.rgb_raw = rgb.astype(np.float32)
         else:
             self.rgb_raw = np.zeros((self.H, self.W, 3)).astype(np.float32)
 
@@ -227,12 +229,12 @@ class TSDF(object):
         H, W = shape
         xmin, ymin, zmin = self.volume_origin.cpu().numpy()
         xmax, ymax, zmax = self.volume_origin.cpu().numpy() + self.volume_size.cpu().numpy()
-        image = torch.zeros(B, H, W).to(self.device).to(torch.float32)
+        image = torch.zeros(B, H, W, 4).to(self.device).to(torch.float32)
         vL, vH, vW = self.volumeTSDF.shape
-        self._rendering_cuda.rendering(image, direction, origin, self.volumeTSDF, B,
+        self._rendering_cuda.rendering(image, direction, self.volumeRGB, self.volumeTSDF, B,
                                        H, W, vH, vW, int(0.999 + 1/self.voxelSize), self.voxelSize,
                                        xmin, xmax, ymin, ymax, zmin, zmax)
-        return image, direction, origin
+        return image
 
 
 def vec2mat(rot_vec, trans_vec):
@@ -262,7 +264,17 @@ def vec2mat(rot_vec, trans_vec):
     return trans_mat
 
 
-if __name__ == '__main__':
+def get_extrinsic(alpha, beta, radius, camera_extrinsic):
+
+    origin = np.array([0, 0, radius])
+    targetT = tft.quaternion_from_euler(*[alpha, beta, 0, 'rxyz'])
+    targetT = tft.quaternion_matrix(targetT)
+    targetT[:3, 3] = origin - targetT[:3, 2] * radius
+
+    return camera_extrinsic @ targetT
+
+
+def test():
     vpm = 400
     v = TSDF(vpm=vpm, volume_size=np.array([0.8, 0.8, 0.3]))
     import time
@@ -289,7 +301,7 @@ if __name__ == '__main__':
         print(pose)
         Tend2base = vec2mat(pose[3:6], pose[0:3])
         Tcam2base = np.matmul(Tend2base, Tcam2end)
-        a = Image(depth/1000, Tcam2base, rgb,
+        a = Image(depth / 1000, Tcam2base, rgb / 255,
                   camera_intr=np.array([614.887, 0, 328.328, 0, 614.955, 236.137, 0, 0, 1]).reshape(3, 3))
         v.integrate(a)
         # Ur.change_pose(init_pose + np.array([0, -0.02, 0, 0, 0, 0])*i)
@@ -303,7 +315,7 @@ if __name__ == '__main__':
     rgb_volume = v.volumeRGB.cpu().numpy()
     verts, faces, normals, values = measure.marching_cubes(volume)
     vert_idx = np.round(verts).astype(int)
-    rgb_val = rgb_volume[vert_idx[:, 0], vert_idx[:, 1], vert_idx[:, 2], :] / 255
+    rgb_val = rgb_volume[vert_idx[:, 0], vert_idx[:, 1], vert_idx[:, 2], :]
     verts = verts / vpm + v.volume_origin.cpu().numpy()
     pt = o3d.geometry.PointCloud()
     pt.points = o3d.utility.Vector3dVector(verts)
@@ -312,14 +324,24 @@ if __name__ == '__main__':
     pose = np.array([-0.3504593, -0.0419833473, 0.44227438, 2.1036984080, 2.250377223, 0.097387733])
     print(pose)
     Tend2base = vec2mat(pose[3:6], pose[0:3])
-    Tcam2base = np.matmul(Tend2base, Tcam2end)
-    h, w = 200, 200
-    img, dirt, origin = v.rendering(Tcam2base, np.array([614.887, 0, w // 2, 0, 614.955, h // 2, 0, 0, 1]).reshape(3, 3), (h, w))
+    # Tcam2base = Tend2base @ Tcam2end
+    Tcam2base = np.array([
+        [0, 1, 0, -0.46],
+        [1, 0, 0, -0.09],
+        [0, 0, -1, 0.58],
+        [0., 0., 0., 1., ]
+    ])
+    Tcam2base = get_extrinsic(0, 0, 0.58, Tcam2base)
+    h, w = 400, 400
+    img = v.rendering(Tcam2base, np.array([614.887, 0, w // 2, 0, 614.955, h // 2, 0, 0, 1]).reshape(3, 3), (h, w))
     img = img
     from matplotlib import pyplot as plt
     img1 = img.squeeze().cpu().numpy()
     print(np.max(img1), np.min(img1))
-    plt.imshow(img1)
+    plt.figure(1)
+    plt.imshow(img1[:, :, -1])
+    plt.figure(2)
+    plt.imshow(img1[:, :, 0:3])
     plt.show()
     mesh = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(verts), o3d.utility.Vector3iVector(faces))
     mesh.compute_vertex_normals()
@@ -328,6 +350,10 @@ if __name__ == '__main__':
     mesh_frame1 = o3d.geometry.TriangleMesh.create_coordinate_frame(
         size=0.2, origin=v.volume_origin.cpu().numpy())
     o3d.visualization.draw_geometries([mesh, mesh_frame, mesh_frame1, pt])
+
+
+if __name__ == '__main__':
+    test()
 
 
 

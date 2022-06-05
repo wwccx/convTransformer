@@ -58,6 +58,11 @@ class gqTrain:
                 self.network = convTransformer(num_classes=2, in_chans=1, window_size=(1, 3),
                                                patch_embedding_size=(1, 32), patch_merging_size=(1, 2),
                                                ).to(self.device)
+            elif 'grasp' in opt.dataset:
+                self.network = convTransformer(in_chans=1, num_classes=32, embed_dim=16, depths=(2, 6),
+                                               num_heads=(3, 12), patch_embedding_size=(2, 2),
+                                               fully_conv_for_grasp=True).to(self.device)
+
             else:
                 self.network = convTransformer(B=opt.batch_size,
                                                num_classes=10).to(self.device)
@@ -65,6 +70,7 @@ class gqTrain:
         elif 'res' in opt.model:
             self.network = models.resnet50(num_classes=10).to(self.device)
             self.optimizer = build_optimizer(opt, self.network)
+
         else:
             # self.network = models.resnet50(num_classes=10).to(self.device)
             self.network = SwinTransformer(num_classer=10).to(self.device)
@@ -83,7 +89,11 @@ class gqTrain:
         self.grad = np.array([])
         self.maxAcc = 0
         if not opt.mixup:
-            self.lossFun = torch.nn.CrossEntropyLoss()
+            if 'grasp' in opt.dataset:
+                from graspDataset import GraspLossFunction
+                self.lossFun = GraspLossFunction()
+            else:
+                self.lossFun = torch.nn.CrossEntropyLoss()
         else:
             self.lossFun = SoftTargetCrossEntropy()
         self.gradNormVal = 0
@@ -111,17 +121,18 @@ class gqTrain:
         tid = p.add_task(f'Epoch{self.currentEpoch}', loss=0, avg_loss=0,
                          batch_time=0, lr=0, avg_grad=0)
         p.update(tid, total=self.num_step_per_epoch)
-        # if task_id:
-            # self.progress.start_task(task_id)
-        for img, target in self.trainDataLoader:
-            target = target.to(self.device).squeeze()
-            img = img.to(self.device)
+
+        # for img, target in self.trainDataLoader:
+        for img, target, mask in self.trainDataLoader:
+            target = target.to(self.device).squeeze().flatten(0, 1)
+            img = img.to(self.device).flatten(0, 1)
+            mask = mask.to(self.device).flatten(0, 1)
             if opt.mixup:
                 img, target = self.mixup(img, target)
             target_pre = self.network(img)
             # print(target_pre.shape)
             # print(target.shape)
-            loss = self.lossFun(target_pre, target)
+            loss = self.lossFun(target_pre, target, mask)
             self.loss_value = np.append(self.loss_value, loss.item())
             self.lr = np.append(self.lr, self.optimizer.param_groups[0]['lr'])
 
@@ -177,11 +188,12 @@ class gqTrain:
         total_pre = torch.tensor(0.1).cuda()
         tid = p.add_task(f'Validation:{self.currentEpoch}', accuracy=0)
         p.update(tid, total=len(self.valDataLoader))
-        for img, target in self.valDataLoader:
-            target = target.to(self.device)
-            img = img.to(self.device)
+        for img, target, mask in self.valDataLoader:
+            target = target.to(self.device).flatten(0, 1)
+            img = img.to(self.device).flatten(0, 1)
+            mask = mask.to(self.device).flatten(0, 1)
             target_pre = self.network(img)
-
+            target_pre = target_pre.squeeze()[torch.where(mask > 0)].view(-1, 2)
             target_pre = torch.argmax(target_pre, dim=1, keepdim=True)
             # print(target_pre.shape, target.shape)
             # print(target_pre, target)

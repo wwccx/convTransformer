@@ -61,7 +61,10 @@ __global__ void rendering(float* image,
 //                     image[batchIdx * H * W + pixelIdx] = 1.444f;
                 }
                 else {
-                    image[batchIdx * H * W + pixelIdx] = (i + last_val / (last_val - tsdf_val)) * voxel_size;
+                    image[batchIdx * H * W * 4 + pixelIdx * 4 + 3] = (i + last_val / (last_val - tsdf_val)) * voxel_size;
+                    image[batchIdx * H * W * 4 + pixelIdx * 4 + 0] = origin[x * vH * vW*3 + y * vW*3 + z*3 + 0];
+                    image[batchIdx * H * W * 4 + pixelIdx * 4 + 1] = origin[x * vH * vW*3 + y * vW*3 + z*3 + 1];
+                    image[batchIdx * H * W * 4 + pixelIdx * 4 + 2] = origin[x * vH * vW*3 + y * vW*3 + z*3 + 2];
                        break;
 //                        x += 0;
                 }

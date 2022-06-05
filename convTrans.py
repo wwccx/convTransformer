@@ -303,8 +303,10 @@ class PatchMerging(nn.Module):
 class convTransformer(nn.Module):
     def __init__(self, in_chans=3, num_classes=10, embed_dim=96, depths=(2, 2, 6, 2), num_heads=(3, 6, 12, 24),
                  patch_embedding_size=(4, 4), patch_merging_size=(2, 2),
-                 window_size=(7, 7), drop_path_rate=0.1, norm_layer=nn.LayerNorm, B=32, patch_resolution=(56, 56)):
+                 window_size=(7, 7), drop_path_rate=0.1, norm_layer=nn.LayerNorm, B=32, patch_resolution=(56, 56),
+                 fully_conv_for_grasp=False):
         super().__init__()
+        self.fully_conv_for_grasp = fully_conv_for_grasp
         self.num_classes = num_classes
 
         self.patch_embed = patchEmbedding(in_chans=in_chans, embed_dim=embed_dim, norm_layer=nn.BatchNorm2d,
@@ -327,16 +329,22 @@ class convTransformer(nn.Module):
                                if i + 1 < len(depths) else None
                                )
             self.layers.append(layer)
-        self.avgpool = nn.AdaptiveAvgPool1d(1)
-        self.head = nn.Linear(int(embed_dim * 2 ** (len(depths) - 1)), num_classes)
+        if fully_conv_for_grasp:
+            self.avgpool = torch.nn.Identity()
+            self.head = nn.Conv2d(int(embed_dim * 2 ** (len(depths) - 1)), num_classes,
+                                  kernel_size=(24, 24), stride=(1, 1))
+        else:
+            self.avgpool = nn.AdaptiveAvgPool1d(1)
+            self.head = nn.Linear(int(embed_dim * 2 ** (len(depths) - 1)), num_classes)
         # print(int(embed_dim * 2 ** (len(depths) - 1)))
 
     def forward(self, x):
         x = self.patch_embed(x)
         for layer in self.layers:
             x = layer(x)
-        x = self.avgpool(x.flatten(2))
-        x = x.flatten(1)
+        if not self.fully_conv_for_grasp:
+            x = self.avgpool(x.flatten(2))
+            x = x.flatten(1)
         # print(x.shape)
         x = self.head(x)
 
@@ -349,7 +357,16 @@ class convTransformer(nn.Module):
 
 if __name__ == '__main__':
     from torchsummary import summary
-
+    net = convTransformer(in_chans=1, num_classes=32, embed_dim=16, depths=(2, 6), num_heads=(3, 12),
+                          patch_embedding_size=(2, 2), fully_conv_for_grasp=True).cuda()
+    summary(net, (1, 100, 100))
+    # with torch.autograd.profiler.profile(enabled=True, use_cuda=True, record_shapes=True) as prof:
+    #     with torch.no_grad():
+    #         img = torch.randn(1, 1, 400, 400).cuda()
+    #         target_pre = net(img)
+    #     torch.cuda.synchronize()
+    #     # print(time.time() - t)
+    # print(prof.key_averages().table(sort_by="self_cuda_time_total"))
     # at = ConvTransBlock(dim=96, num_heads=3).cuda()
     # a = torch.rand(32, 96, 24, 24).cuda()
     # # summary(at, (96, 48, 48), batch_size=8)
@@ -367,6 +384,7 @@ if __name__ == '__main__':
     # for _ in range(100):
     #     b = torch.rand(2, 96, 24, 24).cuda()
     #     a(b)
+    '''
     net = convTransformer(num_classes=10, embed_dim=96, window_size=(3, 7), depths=[2, 2, 6, 2],
                           num_heads=[3, 6, 12, 24]).cuda()
 
@@ -413,3 +431,4 @@ if __name__ == '__main__':
         print('check output:', torch.allclose(y, yaf, atol=1e-5), torch.max(torch.abs(y - yaf) / torch.abs(y)))
         # print(torch.allclose(attn, attnaf, atol=1e-5), torch.max(torch.abs(attn - attnaf)/torch.abs(attn)))
         print('\n')
+        '''

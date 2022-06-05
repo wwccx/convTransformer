@@ -74,6 +74,14 @@ def build_dataset(name, batch_size, data_path, transform=None):
         t = D.DataLoader(batch_size=batch_size, dataset=train_data, num_workers=12)
         v = D.DataLoader(batch_size=batch_size, dataset=val_data, num_workers=12)
         return t, v
+    elif 'grasp' in name.lower():
+        from graspDataset import GraspDataset
+        tdataset = GraspDataset('/home/server/library/parallel_jaw', batch_size=batch_size // 8)
+        vdataset = GraspDataset('/home/server/library/parallel_jaw', batch_size=batch_size // 8)
+        t = D.DataLoader(tdataset, batch_size=8, shuffle=True, num_workers=12)
+        v = D.DataLoader(vdataset, batch_size=8, shuffle=True, num_workers=12)
+        return t, v
+
     else:
         raise NotImplementedError('Only support MINST and CIFAR10')
 
