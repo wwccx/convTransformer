@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 from convTrans import convTransformer
+from gqcnn import GQCNN
 import datetime
 import os
 import logging
@@ -59,13 +60,18 @@ class gqTrain:
                                                patch_embedding_size=(1, 32), patch_merging_size=(1, 2),
                                                ).to(self.device)
             elif 'grasp' in opt.dataset:
-                self.network = convTransformer(in_chans=1, num_classes=32, embed_dim=16, depths=(2, 6),
-                                               num_heads=(3, 12), patch_embedding_size=(2, 2),
+                self.network = convTransformer(in_chans=1, num_classes=32,
+                        embed_dim=96, depths=(2, 6),
+                                               num_heads=(3, 12),
+                                               patch_embedding_size=(4, 4),
                                                fully_conv_for_grasp=True).to(self.device)
 
             else:
                 self.network = convTransformer(B=opt.batch_size,
                                                num_classes=10).to(self.device)
+            self.optimizer = build_optimizer(opt, self.network)
+        elif 'gqcnn' in opt.model:
+            self.network = GQCNN().to(self.device)
             self.optimizer = build_optimizer(opt, self.network)
         elif 'res' in opt.model:
             self.network = models.resnet50(num_classes=10).to(self.device)
@@ -123,13 +129,17 @@ class gqTrain:
         p.update(tid, total=self.num_step_per_epoch)
 
         # for img, target in self.trainDataLoader:
-        for img, target, mask in self.trainDataLoader:
+        for img, pose, target, mask in self.trainDataLoader:
+            # if batchIdx > 20:
+            #     break
             target = target.to(self.device).squeeze().flatten(0, 1)
             img = img.to(self.device).flatten(0, 1)
             mask = mask.to(self.device).flatten(0, 1)
+            pose = pose.to(self.device).flatten(0, 1)
             if opt.mixup:
                 img, target = self.mixup(img, target)
-            target_pre = self.network(img)
+            # _input = [img, pose]
+            target_pre = self.network(*[img, pose])
             # print(target_pre.shape)
             # print(target.shape)
             loss = self.lossFun(target_pre, target, mask)
@@ -186,20 +196,34 @@ class gqTrain:
         valBatchIdx = 0
         success_pre = torch.tensor(0.1).cuda()
         total_pre = torch.tensor(0.1).cuda()
-        tid = p.add_task(f'Validation:{self.currentEpoch}', accuracy=0)
+        tid = p.add_task(f'Validation:{self.currentEpoch}', accuracy=0,
+                positive_accuracy=0, negative_accuracy=0)
         p.update(tid, total=len(self.valDataLoader))
-        for img, target, mask in self.valDataLoader:
+        positive_pre = torch.tensor(0.1).cuda()
+        negative_pre = torch.tensor(0.1).cuda()
+        total_positive_pre = torch.tensor(0.1).cuda()
+        total_negative_pre = torch.tensor(0.1).cuda()
+        for img, pose, target, mask in self.valDataLoader:
             target = target.to(self.device).flatten(0, 1)
             img = img.to(self.device).flatten(0, 1)
             mask = mask.to(self.device).flatten(0, 1)
-            target_pre = self.network(img)
+            pose = pose.to(self.device).flatten(0, 1)
+            target_pre = self.network(*[img, pose])
             target_pre = target_pre.squeeze()[torch.where(mask > 0)].view(-1, 2)
-            target_pre = torch.argmax(target_pre, dim=1, keepdim=True)
+            target_pre = torch.argmax(target_pre, dim=1)
             # print(target_pre.shape, target.shape)
             # print(target_pre, target)
             judge_tensor = (target_pre == target)
             total_pre += len(target)
             success_pre += torch.sum(judge_tensor)
+            # print(target_pre)
+            positive_judge = judge_tensor[torch.where(target > 0)]
+            total_positive_pre += len(positive_judge)
+            positive_pre += torch.sum(positive_judge)
+            
+            negative_judge = judge_tensor[torch.where(target == 0)]
+            total_negative_pre += len(negative_judge)
+            negative_pre += torch.sum(negative_judge)
 
             # if (valBatchIdx + 1) % opt.log_frequency == 0:
             #     logging.info('evalutating:{:.2f}%, success pre{:.3f}%'
@@ -207,8 +231,11 @@ class gqTrain:
             #                          100*success_pre/total_pre)
             #                  )
             valBatchIdx += 1
-            p.update(tid, advance=1, accuracy=100*success_pre/total_pre)
-
+            p.update(tid, advance=1, accuracy=100*success_pre/total_pre,
+                    positive_accuracy=100*positive_pre/total_positive_pre,
+                    negative_accuracy=100*negative_pre/total_negative_pre)
+        print(success_pre, total_pre, positive_pre, total_positive_pre,
+                negative_pre, total_negative_pre)
         return success_pre/total_pre
 
     def save(self, epoch, accuracy):
@@ -245,9 +272,9 @@ class gqTrain:
                 p = self.make_progress('val')
                 with p:
                     accuracy = self.validate(p=p)
-                if accuracy > self.maxAcc or (i + 1) % 10 == 0:
-                    self.maxAcc = max(accuracy, self.maxAcc)
-                    self.save(self.currentEpoch, accuracy)
+                # if accuracy > self.maxAcc or (i + 1) % 10 == 0:
+                self.maxAcc = max(accuracy, self.maxAcc)
+                self.save(self.currentEpoch, accuracy)
                 self.acc_value = np.append(self.acc_value, accuracy.cpu().detach().numpy())
                 self.network.train()
                 for p in self.optimizer.param_groups:
@@ -273,14 +300,14 @@ class gqTrain:
             self.currentEpoch = check_point['epoch'] + 1
             self.maxAcc = max(self.maxAcc, check_point['accuracy'])
             try:
-                # self.acc_value = check_point['accuracy_hist']
-                # self.loss_value = check_point['loss_hist']
-                # self.lr = check_point['lr_hist']
-                # self.grad = check_point['grid_hist']
-                self.acc_value = check_point['acc']
-                self.loss_value = check_point['loss']
-                self.lr = check_point['lr']
-                self.grad = check_point['grid']
+                self.acc_value = check_point['accuracy_hist']
+                self.loss_value = check_point['loss_hist']
+                self.lr = check_point['lr_hist']
+                self.grad = check_point['grid_hist']
+                # self.acc_value = check_point['acc']
+                # self.loss_value = check_point['loss']
+                # self.lr = check_point['lr']
+                # self.grad = check_point['grid']
             except:
                 # self.acc_value = np.load(os.path.join(save_path, 'acc_value.npy'))
                 # self.loss_value = np.load(os.path.join(save_path, 'loss_value.npy'))
@@ -290,6 +317,9 @@ class gqTrain:
         else:
             raise FileNotFoundError('No check points in the path!')
 
+        p = self.make_progress('val')
+        with p:
+            accuracy = self.validate(p=p)
     def test_train(self):
         log_frequency = 10
         self.network.train()
@@ -352,11 +382,15 @@ class gqTrain:
                )
         else:
             progress = Progress(
-               TextColumn("[white]{task.description}", justify="right"),
+               TextColumn("[yellow]{task.description}", justify="right"),
                "[progress.percentage]{task.percentage:>.3f}%",
                BarColumn(bar_width=None),
                "•",
                TextColumn("Accuracy:{task.fields[accuracy]:>.2f}"),
+               "•",
+               TextColumn("positiveAccuracy:{task.fields[positive_accuracy]:>.2f}"),
+               "•",
+               TextColumn("negativeAccuracy:{task.fields[negative_accuracy]:>.2f}"),
                "•",
                TimeRemainingColumn(),
                )
@@ -377,8 +411,8 @@ class gqTrain:
 
 if __name__ == '__main__':
     gqTrain = gqTrain()
-    # gqTrain.run(epoch=opt.n_epochs)
-    gqTrain.test_train()
+    gqTrain.run(epoch=opt.n_epochs)
+    #  gqTrain.test_train()
 
 
 

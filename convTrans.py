@@ -332,23 +332,36 @@ class convTransformer(nn.Module):
         if fully_conv_for_grasp:
             self.avgpool = torch.nn.Identity()
             self.head = nn.Conv2d(int(embed_dim * 2 ** (len(depths) - 1)), num_classes,
-                                  kernel_size=(24, 24), stride=(1, 1))
+                                  kernel_size=(96 // patch_embedding_size[0] // 2 ** (len(depths) - 1)
+                                      ), stride=(1, 1))
         else:
             self.avgpool = nn.AdaptiveAvgPool1d(1)
             self.head = nn.Linear(int(embed_dim * 2 ** (len(depths) - 1)), num_classes)
         # print(int(embed_dim * 2 ** (len(depths) - 1)))
 
-    def forward(self, x):
+    def forward(self, *x):
+        if self.fully_conv_for_grasp:
+            return self._grasp_forward(*x)
+        x = x[0]
         x = self.patch_embed(x)
         for layer in self.layers:
             x = layer(x)
-        if not self.fully_conv_for_grasp:
-            x = self.avgpool(x.flatten(2))
-            x = x.flatten(1)
+        # if not self.fully_conv_for_grasp:
+        x = self.avgpool(x.flatten(2))
+        x = x.flatten(1)
         # print(x.shape)
         x = self.head(x)
 
         return x
+    
+    def _grasp_forward(self, img, pose):
+        img = self.patch_embed(img)
+        for layer in self.layers:
+            img = layer(img)
+        img = img - pose.squeeze().view(pose.shape[0], 1, 1, 1)
+        img = self.head(img)
+
+        return img
 
     @torch.jit.ignore
     def no_weight_decay_keywords(self):
