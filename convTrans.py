@@ -331,21 +331,30 @@ class convTransformer(nn.Module):
             self.layers.append(layer)
         if fully_conv_for_grasp:
             self.avgpool = torch.nn.Identity()
+            self.norm = nn.LayerNorm(int(embed_dim * 2 ** (len(depths) - 1)),
+                                     96 // patch_embedding_size[0] // 2 ** (len(depths) - 1),
+                                     96 // patch_embedding_size[1] // 2 ** (len(depths) - 1))
             self.res = nn.Sequential(
                 nn.Conv2d(int(embed_dim * 2 ** (len(depths) - 1)), int(embed_dim * 2 ** (len(depths))),
                           kernel_size=1, stride=1
                 ),
-                nn.BatchNorm2d(int(embed_dim * 2 ** (len(depths)))),
+                nn.LayerNorm(int(embed_dim * 2 ** (len(depths))),
+                             96 // patch_embedding_size[0] // 2 ** (len(depths) - 1),
+                             96 // patch_embedding_size[1] // 2 ** (len(depths) - 1)),
                 nn.ReLU(),
                 nn.Conv2d(int(embed_dim * 2 ** (len(depths))), int(embed_dim * 2 ** (len(depths))),
                           kernel_size=3, stride=1, padding=1
                           ),
-                nn.BatchNorm2d(int(embed_dim * 2 ** (len(depths)))),
+                nn.LayerNorm(int(embed_dim * 2 ** (len(depths))),
+                             96 // patch_embedding_size[0] // 2 ** (len(depths) - 1),
+                             96 // patch_embedding_size[1] // 2 ** (len(depths) - 1)),
                 nn.ReLU(),
                 nn.Conv2d(int(embed_dim * 2 ** (len(depths))), int(embed_dim * 2 ** (len(depths) - 1)),
                           kernel_size=1, stride=1
                           ),
-                nn.BatchNorm2d(int(embed_dim * 2 ** (len(depths) - 1))),
+                nn.LayerNorm(int(embed_dim * 2 ** (len(depths)) - 1),
+                             96 // patch_embedding_size[0] // 2 ** (len(depths) - 1),
+                             96 // patch_embedding_size[1] // 2 ** (len(depths) - 1)),
                 nn.ReLU(),
             )
             self.head = nn.Conv2d(int(embed_dim * 2 ** (len(depths) - 1)), num_classes,
@@ -379,7 +388,9 @@ class convTransformer(nn.Module):
         for layer in self.layers:
             img = layer(img)
         short_cut = img
+        img = self.norm(img)
         img -= pose.squeeze().view(pose.shape[0], 1, 1, 1)
+        img = self.res(img)
         img += short_cut
         img = self.head(img)
 
