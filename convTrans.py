@@ -331,9 +331,26 @@ class convTransformer(nn.Module):
             self.layers.append(layer)
         if fully_conv_for_grasp:
             self.avgpool = torch.nn.Identity()
+            self.res = nn.Sequential(
+                nn.Conv2d(int(embed_dim * 2 ** (len(depths) - 1)), int(embed_dim * 2 ** (len(depths))),
+                          kernel_size=1, stride=1
+                ),
+                nn.BatchNorm2d(int(embed_dim * 2 ** (len(depths)))),
+                nn.ReLU(),
+                nn.Conv2d(int(embed_dim * 2 ** (len(depths))), int(embed_dim * 2 ** (len(depths))),
+                          kernel_size=3, stride=1, padding=1
+                          ),
+                nn.BatchNorm2d(int(embed_dim * 2 ** (len(depths)))),
+                nn.ReLU(),
+                nn.Conv2d(int(embed_dim * 2 ** (len(depths))), int(embed_dim * 2 ** (len(depths) - 1)),
+                          kernel_size=1, stride=1
+                          ),
+                nn.BatchNorm2d(int(embed_dim * 2 ** (len(depths) - 1))),
+                nn.ReLU(),
+            )
             self.head = nn.Conv2d(int(embed_dim * 2 ** (len(depths) - 1)), num_classes,
-                                  kernel_size=(96 // patch_embedding_size[0] // 2 ** (len(depths) - 1)
-                                      ), stride=(1, 1))
+                                  kernel_size=(96 // patch_embedding_size[0] // 2 ** (len(depths) - 1)),
+                                  stride=(1, 1))
         else:
             self.avgpool = nn.AdaptiveAvgPool1d(1)
             self.head = nn.Linear(int(embed_dim * 2 ** (len(depths) - 1)), num_classes)
@@ -341,6 +358,9 @@ class convTransformer(nn.Module):
 
     def forward(self, *x):
         if self.fully_conv_for_grasp:
+            if len(x) == 1:
+                pose = torch.zeros(x[0].shape[0]).cuda()
+                x = [x[0], pose]
             return self._grasp_forward(*x)
         x = x[0]
         x = self.patch_embed(x)
@@ -358,7 +378,9 @@ class convTransformer(nn.Module):
         img = self.patch_embed(img)
         for layer in self.layers:
             img = layer(img)
-        img = img - pose.squeeze().view(pose.shape[0], 1, 1, 1)
+        short_cut = img
+        img -= pose.squeeze().view(pose.shape[0], 1, 1, 1)
+        img += short_cut
         img = self.head(img)
 
         return img
@@ -370,9 +392,24 @@ class convTransformer(nn.Module):
 
 if __name__ == '__main__':
     from torchsummary import summary
-    net = convTransformer(in_chans=1, num_classes=32, embed_dim=16, depths=(2, 6), num_heads=(3, 12),
-                          patch_embedding_size=(2, 2), fully_conv_for_grasp=True).cuda()
-    summary(net, (1, 100, 100))
+
+    net = convTransformer(in_chans=1, num_classes=32, embed_dim=96, depths=(2, 6), num_heads=(3, 12),
+                          patch_embedding_size=(4, 4), fully_conv_for_grasp=True).cuda()
+    summary(net, (1, 96, 96))
+    # net.load_state_dict(torch.load('gqTransEpoch11.pth')['model'])
+    net.eval()
+    a = torch.zeros((1, 1, 96, 96)).cuda()
+    a += 0.85
+    # for i in range(10, 70):
+    # a[:, :, i, i:i+20] = -0.49
+    a[:, :, 10:-10, 40:-40] = 0.30
+    sf = nn.Softmax(dim=1)
+    print(sf(net(a).squeeze().view(-1, 2)))
+    from matplotlib import pyplot as plt
+
+    plt.imshow(a[0, 0, :, :].cpu().numpy())
+    plt.show()
+
     # with torch.autograd.profiler.profile(enabled=True, use_cuda=True, record_shapes=True) as prof:
     #     with torch.no_grad():
     #         img = torch.randn(1, 1, 400, 400).cuda()
