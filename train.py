@@ -33,12 +33,12 @@ parser.add_argument("--log_frequency", type=int, default=10, help="log info per 
 parser.add_argument("--model", type=str, default='convTrans', help="the trained model")
 parser.add_argument("--dataset", type=str, default='imagenet', help='the dataset')
 parser.add_argument("--check_point", type=str, default='')
-parser.add_argument("--optim", type=str, default='attcg')
+parser.add_argument("--optim", type=str, default='adamw')
 parser.add_argument('--amp_level', type=str, default='O1', choices=['O0', 'O1', 'O2'],
                     help='mixed precision opt level, if O0, no amp is used')
 parser.add_argument("--mixup", type=bool, default=False)
 opt = parser.parse_args()
-
+print(opt)
 
 class gqTrain:
     def __init__(self, dataDir='', saveDir='./train', check_point=opt.check_point):
@@ -70,6 +70,8 @@ class gqTrain:
                 self.network = convTransformer(B=opt.batch_size,
                                                num_classes=10).to(self.device)
             self.optimizer = build_optimizer(opt, self.network)
+            for p in self.optimizer.param_groups:
+                logging.info('current lr:{}'.format(p['lr']))
         elif 'gqcnn' in opt.model:
             self.network = GQCNN().to(self.device)
             self.optimizer = build_optimizer(opt, self.network)
@@ -84,7 +86,7 @@ class gqTrain:
         if opt.amp_level != 'O0':
             self.network, self.optimizer = amp.initialize(self.network, self.optimizer, opt_level=opt.amp_level)
 
-        # summary(self.network, (3, 224, 224), batch_size=opt.batch_size)
+        summary(self.network, (1, 96, 96), batch_size=opt.batch_size)
         # self.optimizer = build_optimizer(self.network)
         self.num_step_per_epoch = len(self.trainDataLoader)
         self.lr_scheduler = build_scheduler(opt, optimier=self.optimizer, n_iter_per_epoch=self.num_step_per_epoch)
@@ -234,8 +236,8 @@ class gqTrain:
             p.update(tid, advance=1, accuracy=100*success_pre/total_pre,
                     positive_accuracy=100*positive_pre/total_positive_pre,
                     negative_accuracy=100*negative_pre/total_negative_pre)
-        print(success_pre, total_pre, positive_pre, total_positive_pre,
-                negative_pre, total_negative_pre)
+        # print(success_pre, total_pre, positive_pre, total_positive_pre,
+        #         negative_pre, total_negative_pre)
         return success_pre/total_pre
 
     def save(self, epoch, accuracy):

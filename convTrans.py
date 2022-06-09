@@ -331,35 +331,43 @@ class convTransformer(nn.Module):
             self.layers.append(layer)
         if fully_conv_for_grasp:
             self.avgpool = torch.nn.Identity()
-            self.norm = nn.LayerNorm(int(embed_dim * 2 ** (len(depths) - 1)),
-                                     96 // patch_embedding_size[0] // 2 ** (len(depths) - 1),
-                                     96 // patch_embedding_size[1] // 2 ** (len(depths) - 1))
-            self.res = nn.Sequential(
-                nn.Conv2d(int(embed_dim * 2 ** (len(depths) - 1)), int(embed_dim * 2 ** (len(depths))),
-                          kernel_size=1, stride=1
-                ),
-                nn.LayerNorm(int(embed_dim * 2 ** (len(depths))),
-                             96 // patch_embedding_size[0] // 2 ** (len(depths) - 1),
-                             96 // patch_embedding_size[1] // 2 ** (len(depths) - 1)),
-                nn.ReLU(),
-                nn.Conv2d(int(embed_dim * 2 ** (len(depths))), int(embed_dim * 2 ** (len(depths))),
-                          kernel_size=3, stride=1, padding=1
-                          ),
-                nn.LayerNorm(int(embed_dim * 2 ** (len(depths))),
-                             96 // patch_embedding_size[0] // 2 ** (len(depths) - 1),
-                             96 // patch_embedding_size[1] // 2 ** (len(depths) - 1)),
-                nn.ReLU(),
-                nn.Conv2d(int(embed_dim * 2 ** (len(depths))), int(embed_dim * 2 ** (len(depths) - 1)),
-                          kernel_size=1, stride=1
-                          ),
-                nn.LayerNorm(int(embed_dim * 2 ** (len(depths)) - 1),
-                             96 // patch_embedding_size[0] // 2 ** (len(depths) - 1),
-                             96 // patch_embedding_size[1] // 2 ** (len(depths) - 1)),
-                nn.ReLU(),
-            )
-            self.head = nn.Conv2d(int(embed_dim * 2 ** (len(depths) - 1)), num_classes,
-                                  kernel_size=(96 // patch_embedding_size[0] // 2 ** (len(depths) - 1)),
-                                  stride=(1, 1))
+            self.norm_img = nn.BatchNorm2d(int(embed_dim * 2 ** (len(depths) - 1)))
+            self.norm_pose = nn.BatchNorm2d(int(embed_dim * 2 ** (len(depths) - 1)))
+            #self.res = nn.Sequential(
+            #    nn.Conv2d(int(embed_dim * 2 ** (len(depths) - 1)), int(embed_dim * 2 ** (len(depths))),
+            #              kernel_size=1, stride=1
+            #    ),
+            #    nn.BatchNorm2d(int(embed_dim * 2 ** (len(depths)))),
+            #    nn.ReLU(),
+            #    # nn.Conv2d(int(embed_dim * 2 ** (len(depths))), int(embed_dim * 2 ** (len(depths))),
+            #    #          kernel_size=3, stride=1, padding=1
+            #    #          ),
+            #    # nn.BatchNorm2d(int(embed_dim * 2 ** (len(depths)))),
+            #    # nn.ReLU(),
+            #    nn.Conv2d(int(embed_dim * 2 ** (len(depths))), int(embed_dim * 2 ** (len(depths) - 1)),
+            #              kernel_size=1, stride=1
+            #              ),
+            #    nn.BatchNorm2d(int(embed_dim * 2 ** (len(depths) - 1))),
+            #    nn.ReLU(),
+            #)
+            self.head = nn.Sequential(
+                    nn.Conv2d(int(embed_dim * 2 ** (len(depths) - 1)),
+                        int(embed_dim * 2 ** (len(depths) - 2)),
+                        kernel_size=3, stride=1
+                    ),
+                    nn.BatchNorm2d(int(embed_dim * 2 ** (len(depths) - 2))),
+                    nn.ReLU(),
+                    nn.Conv2d(int(embed_dim * 2 ** (len(depths) - 2)),
+                        int(embed_dim * 2 ** (len(depths) - 3)),
+                        kernel_size=3, stride=1
+                    ),
+                    nn.BatchNorm2d(int(embed_dim * 2 ** (len(depths) - 3))),
+                    nn.ReLU(),
+                    nn.Conv2d(int(embed_dim * 2 ** (len(depths) - 3)),
+                        num_classes,
+                        kernel_size=96 // patch_embedding_size[0] // 2 ** (len(depths)- 1) - 4, stride=1
+                    ),
+                )
         else:
             self.avgpool = nn.AdaptiveAvgPool1d(1)
             self.head = nn.Linear(int(embed_dim * 2 ** (len(depths) - 1)), num_classes)
@@ -387,11 +395,13 @@ class convTransformer(nn.Module):
         img = self.patch_embed(img)
         for layer in self.layers:
             img = layer(img)
-        short_cut = img
-        img = self.norm(img)
-        img -= pose.squeeze().view(pose.shape[0], 1, 1, 1)
-        img = self.res(img)
-        img += short_cut
+        # short_cut = img
+        img = self.norm_img(img)
+        pose = self.norm_pose(pose.squeeze().view(pose.shape[0], 1, 1,1).expand_as(img))
+        img -= pose
+        # print(img.size())
+        # img = self.res(img)
+        # img += short_cut
         img = self.head(img)
 
         return img
