@@ -61,8 +61,10 @@ class GraspDataset(torch.utils.data.Dataset):
         metric = metric[choice_index]
         angle = grasp[:, 3]
         depth = grasp[:, 2]
-        depth = ((depth - self.pose_mean) / self.pose_std).astype(np.float32)
-        img = ((img.transpose((0, 3, 1, 2)) - self.img_mean)/self.img_std).astype(np.float32)
+        # depth = ((depth - self.pose_mean) / self.pose_std).astype(np.float32)
+        depth = depth.astype(np.float32)
+        img = img.transpose((0, 3, 1, 2))
+        # img = ((img.transpose((0, 3, 1, 2)) - self.img_mean)/self.img_std).astype(np.float32)
         # img -= np.expand_dims(depth, (1, 2, 3))
         metric = (metric > 0.7).astype(np.long)
         flag = np.ones_like(angle)
