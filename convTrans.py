@@ -397,7 +397,9 @@ class convTransformer(nn.Module):
             img = layer(img)
         # short_cut = img
         img = self.norm_img(img)
-        pose = self.norm_pose(pose.squeeze().view(pose.shape[0], 1, 1,1).expand_as(img))
+        if img.shape[0] == 1:
+            img = img.repeat(pose.shape[0], 1, 1, 1)
+        pose = self.norm_pose(pose.squeeze().view(pose.shape[0], 1, 1, 1).expand_as(img))
         img -= pose
         # print(img.size())
         # img = self.res(img)
@@ -416,16 +418,18 @@ if __name__ == '__main__':
 
     net = convTransformer(in_chans=1, num_classes=32, embed_dim=96, depths=(2, 6), num_heads=(3, 12),
                           patch_embedding_size=(4, 4), fully_conv_for_grasp=True).cuda()
-    summary(net, (1, 96, 96))
-    # net.load_state_dict(torch.load('gqTransEpoch11.pth')['model'])
+    # summary(net, (1, 96, 96))
+    net.load_state_dict(torch.load('gqTransEpoch11.pth')['model'])
     net.eval()
     a = torch.zeros((1, 1, 96, 96)).cuda()
-    a += 0.85
+    a += 0.55
     # for i in range(10, 70):
-    # a[:, :, i, i:i+20] = -0.49
-    a[:, :, 10:-10, 40:-40] = 0.30
-    sf = nn.Softmax(dim=1)
-    print(sf(net(a).squeeze().view(-1, 2)))
+    #     a[:, :, i, i:i+20] = 0.49
+    a[:, :, 10:-10, 40:-40] = 0.10
+    sf = nn.Softmax(dim=2)
+    out = net(a, torch.tensor([0.5, 0.25, 0, -0.25, -0.5]).cuda()).squeeze()
+    print(out.shape)
+    print(sf(out.view(5, -1, 2)))
     from matplotlib import pyplot as plt
 
     plt.imshow(a[0, 0, :, :].cpu().numpy())

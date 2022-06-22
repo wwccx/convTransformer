@@ -1,7 +1,6 @@
 import numpy as np
 import torch
 from convTrans import convTransformer
-from gqcnn import GQCNN
 import datetime
 import os
 import logging
@@ -17,6 +16,7 @@ from optimizer_swin import build_optimizer as swin_optim
 from timm.data import Mixup
 from timm.loss import SoftTargetCrossEntropy
 from apex import amp
+from virtual_grasp.virtualGraspDataset import VirtualGraspDataset
 from rich.progress import (
     BarColumn,
     Progress,
@@ -37,8 +37,10 @@ parser.add_argument("--optim", type=str, default='adamw')
 parser.add_argument('--amp_level', type=str, default='O1', choices=['O0', 'O1', 'O2'],
                     help='mixed precision opt level, if O0, no amp is used')
 parser.add_argument("--mixup", type=bool, default=False)
+parser.add_argument("--finetune", type=str, default='')
 opt = parser.parse_args()
 print(opt)
+
 
 class gqTrain:
     def __init__(self, dataDir='', saveDir='./train', check_point=opt.check_point):
@@ -47,11 +49,12 @@ class gqTrain:
 
         self.dataDir = dataDir
 
-        self.trainDataLoader, self.valDataLoader = build_dataset(
-            name=opt.dataset,
-            batch_size=opt.batch_size,
-            data_path='./data'
-        )
+        # self.trainDataLoader, self.valDataLoader = build_dataset(
+        #     name=opt.dataset,
+        #     batch_size=opt.batch_size,
+        #     data_path='./data'
+        # )
+        self.trainDataLoader = []
 
         logging.info('data set loaded')
         if 'convTrans' in opt.model:
@@ -88,13 +91,13 @@ class gqTrain:
 
         summary(self.network, (1, 96, 96), batch_size=opt.batch_size)
         # self.optimizer = build_optimizer(self.network)
-        self.num_step_per_epoch = len(self.trainDataLoader)
-        self.lr_scheduler = build_scheduler(opt, optimier=self.optimizer, n_iter_per_epoch=self.num_step_per_epoch)
+
         self.currentEpoch = 0
         self.loss_value = np.array([])
         self.acc_value = np.array([])
         self.lr = np.array([])
         self.grad = np.array([])
+        self.finetune_acc = np.array([])
         self.maxAcc = 0
         if not opt.mixup:
             if 'grasp' in opt.dataset:
@@ -104,6 +107,7 @@ class gqTrain:
                 self.lossFun = torch.nn.CrossEntropyLoss()
         else:
             self.lossFun = SoftTargetCrossEntropy()
+
         self.gradNormVal = 0
         self.mixup = Mixup(mixup_alpha=0.8, cutmix_alpha=1.0, cutmix_minmax=None,
                       prob=1.0, switch_prob=0.5, mode='batch',
@@ -115,10 +119,19 @@ class gqTrain:
             self.load_check_point(check_point)
         else:
             self.saveDir = os.path.join(saveDir,
-                                        datetime.datetime.now().strftime(opt.model + '%y_%m_%d_%H:%M'))
+                                        datetime.datetime.now().strftime(opt.model + '%y_%m_%d_%H_%M'))
             logging.info('save path:'+self.saveDir)
-            os.makedirs(self.saveDir, exist_ok=True)
-    
+        if opt.finetune != '':
+            self.network.load_state_dict(
+                torch.load(opt.finetune)['model']
+            )
+            self.trainDataLoader = VirtualGraspDataset(self.network)
+            self.saveDir = os.path.join(saveDir,
+                                        'vfinetune'+datetime.datetime.now().strftime(opt.model + '%y_%m_%d_%H_%M'))
+        os.makedirs(self.saveDir, exist_ok=True)
+        self.num_step_per_epoch = len(self.trainDataLoader)
+        self.lr_scheduler = build_scheduler(opt, optimier=self.optimizer, n_iter_per_epoch=self.num_step_per_epoch)
+
     def train(self, log_frequency=opt.log_frequency, p=None):
         self.network.train()
         batchIdx = 0
@@ -284,6 +297,72 @@ class gqTrain:
                 np.save(os.path.join(self.saveDir, 'acc_value.npy'), self.acc_value)
             self.currentEpoch += 1
 
+    def fine_tune(self, p, log_frequency=10):
+
+        self.network.train()
+        avg_loss = 0
+        batch_time = 0
+        avg_grad = 0
+        avg_acc = 0
+        t0 = time.time()
+        tid = p.add_task(f'Epoch{self.currentEpoch}', loss=0, avg_loss=0,
+                         batch_time=0, lr=0, avg_grad=0, avg_acc=0)
+        p.update(tid, total=self.num_step_per_epoch)
+
+        for batchIdx in range(len(self.trainDataLoader)):
+            img, pose, target, mask = self.trainDataLoader[batchIdx]
+            target = target.to(self.device).squeeze()
+            img = img.to(self.device)
+            mask = mask.to(self.device)
+            pose = pose.to(self.device)
+            target_pre = self.network(*[img, pose])
+            loss = self.lossFun(target_pre, target, mask)
+            self.loss_value = np.append(self.loss_value, loss.item())
+            self.lr = np.append(self.lr, self.optimizer.param_groups[0]['lr'])
+            self.finetune_acc = np.append(self.finetune_acc, torch.sum(target).item()/len(target))
+            self.optimizer.zero_grad()
+            if opt.amp_level != "O0":
+                with amp.scale_loss(loss, self.optimizer) as scaled_loss:
+                    scaled_loss.backward()
+            else:
+                loss.backward()
+            if self.gradNormVal:
+                grad_norm = torch.nn.utils.clip_grad_norm_(self.network.parameters(), self.gradNormVal)
+                self.grad = np.append(self.grad, grad_norm.item())
+                avg_grad = (batchIdx * avg_grad + grad_norm.item()) / (batchIdx + 1)
+            else:
+                grad_norm = self.get_grad_norm(self.network.parameters())
+                if not np.isinf(grad_norm):
+                    self.grad = np.append(self.grad, grad_norm)
+                    avg_grad = (batchIdx * avg_grad + grad_norm) / (batchIdx + 1)
+            self.optimizer.step()
+            avg_loss = (batchIdx * avg_loss + loss.item()) / (batchIdx + 1)
+            avg_acc = (batchIdx * avg_acc + self.finetune_acc[-1]) / (batchIdx + 1)
+            if (batchIdx + 1) % log_frequency == 0:
+                batch_time = (time.time() - t0) / log_frequency
+                t0 = time.time()
+                np.save(os.path.join(self.saveDir, 'loss_value.npy'),
+                        self.loss_value)
+                np.save(os.path.join(self.saveDir, 'lr_value.npy'),
+                        self.lr)
+                np.save(os.path.join(self.saveDir, 'grad_value.npy'),
+                        self.grad)
+                np.save(os.path.join(self.saveDir, 'acc_value.npy'),
+                        self.finetune_acc)
+
+            p.update(tid, advance=1, loss=loss.item(), avg_loss=avg_loss,
+                     batch_time=batch_time, lr=self.lr[-1], avg_grad=avg_grad, avg_acc=avg_acc)
+            self.lr_scheduler.step_update(self.currentEpoch * self.num_step_per_epoch + batchIdx)
+        return avg_acc
+
+    def launch_fine_tune(self, epoch):
+        for i in range(self.currentEpoch, epoch):
+            p = self.make_progress('finetune')
+            with p as x:
+                acc = self.fine_tune(p=x)
+            self.save(self.currentEpoch, acc)
+            self.currentEpoch += 1
+
     def load_check_point(self, save_path):
         logging.info('searching in ' + save_path)
         check_points = os.listdir(save_path)
@@ -319,9 +398,10 @@ class gqTrain:
         else:
             raise FileNotFoundError('No check points in the path!')
 
-        p = self.make_progress('val')
-        with p:
-            accuracy = self.validate(p=p)
+        # p = self.make_progress('val')
+        # with p:
+        #     accuracy = self.validate(p=p)
+
     def test_train(self):
         log_frequency = 10
         self.network.train()
@@ -382,6 +462,26 @@ class gqTrain:
                "•",
                TimeRemainingColumn(),
                )
+        elif partten == 'finetune':
+            progress = Progress(
+                TextColumn("[bold blue]{task.description}", justify="right"),
+                "[progress.percentage]{task.percentage:>.3f}%",
+                BarColumn(bar_width=None),
+                "•",
+                TextColumn("lr:{task.fields[lr]:>5.4e}"),
+                "•",
+                TextColumn("L:{task.fields[loss]:>6.5e}"),
+                "•",
+                TextColumn("avgL:{task.fields[avg_loss]:>6.5e}"),
+                "•",
+                TextColumn("avgAcc:{task.fields[avg_acc]:>5.4e}"),
+                "•",
+                TextColumn("Grad:{task.fields[avg_grad]:>5.4e}"),
+                "•",
+                TextColumn("bTime:{task.fields[batch_time]:>.3f}s"),
+                "•",
+                TimeRemainingColumn(),
+            )
         else:
             progress = Progress(
                TextColumn("[yellow]{task.description}", justify="right"),
@@ -411,9 +511,13 @@ class gqTrain:
         total_norm = total_norm ** (1. / norm_type)
         return total_norm
 
+
 if __name__ == '__main__':
     gqTrain = gqTrain()
-    gqTrain.run(epoch=opt.n_epochs)
+    if opt.finetune == '':
+        gqTrain.run(epoch=opt.n_epochs)
+    else:
+        gqTrain.launch_fine_tune(opt.n_epochs)
     #  gqTrain.test_train()
 
 
