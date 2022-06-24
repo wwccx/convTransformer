@@ -49,12 +49,12 @@ class gqTrain:
 
         self.dataDir = dataDir
 
-        # self.trainDataLoader, self.valDataLoader = build_dataset(
-        #     name=opt.dataset,
-        #     batch_size=opt.batch_size,
-        #     data_path='./data'
-        # )
-        self.trainDataLoader = []
+        self.trainDataLoader, self.valDataLoader = build_dataset(
+            name=opt.dataset,
+            batch_size=opt.batch_size,
+            data_path='./data'
+        )
+        # self.trainDataLoader = []
 
         logging.info('data set loaded')
         if 'convTrans' in opt.model:
@@ -113,6 +113,7 @@ class gqTrain:
                       prob=1.0, switch_prob=0.5, mode='batch',
                       label_smoothing=0.1, num_classes=1000
                       )
+        self.saveDir = ''
         if opt.finetune != '':
             # self.network.load_state_dict(
             #     torch.load(opt.finetune)['model']
@@ -123,6 +124,8 @@ class gqTrain:
             else:
                 self.saveDir = os.path.join(saveDir,
                                             'vfinetune'+datetime.datetime.now().strftime(opt.model + '%y_%m_%d_%H_%M'))
+        if self.saveDir == '':
+            self.saveDir = os.path.join(saveDir, datetime.datetime.now().strftime(opt.model + '%y_%m_%d_%H_%M'))
         os.makedirs(self.saveDir, exist_ok=True)
         self.num_step_per_epoch = len(self.trainDataLoader)
         self.lr_scheduler = build_scheduler(opt, optimier=self.optimizer, n_iter_per_epoch=self.num_step_per_epoch)

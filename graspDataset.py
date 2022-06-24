@@ -3,6 +3,7 @@ import torch.utils.data
 import os
 import numpy as np
 import glob
+import torch.nn.functional as F
 
 
 class GraspDataset(torch.utils.data.Dataset):
@@ -87,6 +88,54 @@ class GraspDataset(torch.utils.data.Dataset):
     def __len__(self):
         return int(len(self.grasps_files) * self.index_split * 100 / self.batch_size) if self.dataset_partten == 'train' \
             else int(len(self.grasps_files) * (1 - self.index_split) * 100 / self.batch_size)
+
+
+class GGSCNNGraspDataset(torch.utils.data.Dataset):
+    def __init__(self, dataset_dir, pattern='train'):
+        if pattern == 'train':
+            self.dataset_dir = dataset_dir
+        elif pattern == 'validation':
+            self.dataset_dir = dataset_dir + '_validation'
+
+        self.grasps_files = glob.glob(os.path.join(self.dataset_dir, '*', 'tensors', 'poseTensor_*.npz'))
+        self.grasps_files.sort()
+
+        self.img_files = glob.glob(os.path.join(self.dataset_dir, 'tensors', 'imgTensor_*.npz'))
+        self.img_files.sort()
+
+        self.metrics_files = glob.glob(os.path.join(self.dataset_dir, 'tensors', 'metricTensor_*.npz'))
+        self.metrics_files.sort()
+        self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+        assert len(self.grasps_files) == len(self.img_files) == len(self.metrics_files),\
+               'number of grasp files not match'
+        # self.grid = F.affine_grid()
+        self.mask_idx_zero_dim = torch.arange(8).to(self.device)
+        self.ANGLE_INTERVAL = np.pi / 16
+
+    def __len__(self):
+        return len(self.grasps_files)
+
+    def __getitem__(self, item):
+        grasp = torch.from_numpy(np.load(self.grasps_files[item])['arr_0']).squeeze().to(self.device)
+        img = torch.from_numpy(np.load(self.img_files[item])['arr_0']).squeeze().unsqueeze(1).to(self.device)
+        metric = torch.from_numpy(np.load(self.metrics_files[item])['arr_0']).squeeze().to(self.device)
+        angle = torch.rand(8).to(self.device) * np.pi
+        mask = torch.zeros(8, 32).to(self.device)
+        affine_matrix = torch.zeros((8, 2, 3)).to(self.device)
+        affine_matrix[:, 0, 0] = torch.cos(angle)
+        affine_matrix[:, 0, 1] = torch.sin(angle)
+        affine_matrix[:, 1, 0] = -torch.sin(angle)
+        affine_matrix[:, 1, 1] = torch.cos(angle)
+
+        grid = F.affine_grid(affine_matrix, img.shape, align_corners=False)
+        img = F.grid_sample(img, grid, align_corners=False, padding_mode='border')
+
+        mask_idx_second_dim = torch.round(angle / self.ANGLE_INTERVAL).to(torch.long)
+        mask[self.mask_idx_zero_dim, 2 * mask_idx_second_dim] = 1
+        mask[self.mask_idx_zero_dim, 2 * mask_idx_second_dim + 1] = 1
+
+        return img, grasp, metric, mask
+
 
 
 class GraspLossFunction(torch.nn.Module):

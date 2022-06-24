@@ -80,7 +80,7 @@ class VirtualGraspDataset():
         depth_min = torch.min(depth_image)
         depth_max = torch.max(depth_image)
         # print(depth_max, depth_min)
-        pose = -torch.arange(15).cuda() * 0.02 + depth_max
+        pose = (3 - torch.arange(15).cuda()) * 0.02 + depth_max
             # pose = pose.unsqueeze(0).cuda()
         dense_quality = self.supervise_model(depth_image, pose)
         shape = dense_quality.shape
@@ -100,8 +100,7 @@ class VirtualGraspDataset():
                 max_index[1] * np.pi / 16,
                 72
             ]
-
-            depth = pose[torch.randint(15, (1,))].cpu()
+            depth = pose[max_index[0]].cpu()
         else:
             max_index = max_index[::-1]
             grasp = [
@@ -110,8 +109,8 @@ class VirtualGraspDataset():
                 torch.randint(16, (1,)).item() * np.pi / 16,
                 72
             ]
+            depth = pose[torch.randint(15, (1,))].cpu()
 
-            depth = pose[max_index[0]].cpu()
         pos, quat, color_img, width = self._env.grasp_img2real(rgb_image, depth_image, grasp, depth=depth)
         img = depth_image[
               0, 0, max_index[2] * 8:max_index[2] * 8 + 96, max_index[3] * 8:max_index[3] * 8 + 96
@@ -120,8 +119,9 @@ class VirtualGraspDataset():
         return pos, quat, color_img, width, img, depth, max_index[1]
     
     def random_place_objects(self, obj_idx, z_pos, scale):
-        randomOri = self._env.p.getQuaternionFromEuler((np.random.rand(3) - 0.5) * np.pi / 2)
+
         for i, obj in enumerate(obj_idx):
+            randomOri = self._env.p.getQuaternionFromEuler((np.random.rand(3) - 0.5) * np.pi * 2)
             self._env.p.resetBasePositionAndOrientation(
                 obj, [0.0, i * self._env.d, z_pos[i] * scale[i] * 1.8], randomOri
             )
