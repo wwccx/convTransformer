@@ -1,5 +1,5 @@
 import torch
-import torch.utils.data as tdata
+from matplotlib import pyplot as plt
 from virtual_grasp.environment import VirtualEnvironment
 import numpy as np
 import time
@@ -44,13 +44,13 @@ class VirtualGraspDataset():
                                                globalScaling=s))
             z_pos.append(z)
             scale.append(s)
-            self._env.p.changeDynamics(idx_obj[idx_robot], -1, mass=0, lateralFriction=6,
-                                       restitution=0.98, rollingFriction=0.07, spinningFriction=0.15,
-                                       contactStiffness=1e6, contactDamping=0.5)
+            self._env.p.changeDynamics(idx_obj[idx_robot], -1, mass=0, lateralFriction=7,
+                                       restitution=0.98, rollingFriction=5, spinningFriction=5,
+                                       contactStiffness=1e9, contactDamping=5)
         self.obj_count += self._env.numRobots
         self.supervise_model.eval()
         self.random_place_objects(obj_idx, z_pos, scale)
-        time.sleep(0.5)
+        time.sleep(1)
         while 1:
             try:
                 rgb_image, depth_image = self._env.update_camera()
@@ -63,7 +63,7 @@ class VirtualGraspDataset():
                     pos_grasp_init.append(pos)
                     ori_grasp_init.append(ori)
                     grasp_result.append(self.plan_grasp(depth_image[idx_robot], rgb_image[idx_robot]))
-
+                    # print(grasp_result[idx_robot][5])
                 return self.execute_grasps(grasp_result, obj_idx, pos_grasp_init)
 
             except Exception as e:
@@ -79,33 +79,45 @@ class VirtualGraspDataset():
         depth_image = torch.from_numpy(depth_image).to(torch.float32).cuda().unsqueeze(0).unsqueeze(0)
         depth_min = torch.min(depth_image)
         depth_max = torch.max(depth_image)
-        if depth_max - depth_min < 0.01:
-            pose = torch.mean(depth_image).cuda().unsqueeze(0)
-        else:
-            pose = torch.arange(10).cuda() * (depth_max - depth_min) / 9 + depth_min - 0.01
+        # print(depth_max, depth_min)
+        pose = -torch.arange(15).cuda() * 0.02 + depth_max
             # pose = pose.unsqueeze(0).cuda()
         dense_quality = self.supervise_model(depth_image, pose)
         shape = dense_quality.shape
         dense_quality = self.sf_fun(dense_quality.view(shape[0], -1, 2, shape[2], shape[3]))[:, :, 1, ...]
+        shape = dense_quality.shape
+        # print(dense_quality.shape)
         flatten_max_index = torch.argmax(dense_quality).detach().cpu().numpy()
         max_index = []
         for dim in shape[::-1]:
             max_index.append(flatten_max_index % dim)
             flatten_max_index //= dim
-        max_index = max_index[::-1]
-        grasp = [
-            48 + max_index[2] * 8,
-            48 + max_index[3] * 8,
-            max_index[1] * np.pi / 16,
-            72
-        ]
-        depth = max_index[0] * (depth_max - depth_min) / 9 + depth_min - 0.01
+        if torch.rand(1) < 0.7:
+            max_index = max_index[::-1]
+            grasp = [
+                48 + max_index[2] * 8,
+                48 + max_index[3] * 8,
+                max_index[1] * np.pi / 16,
+                72
+            ]
+
+            depth = pose[torch.randint(15, (1,))].cpu()
+        else:
+            max_index = max_index[::-1]
+            grasp = [
+                48 + max_index[2] * 8,
+                48 + max_index[3] * 8,
+                torch.randint(16, (1,)).item() * np.pi / 16,
+                72
+            ]
+
+            depth = pose[max_index[0]].cpu()
         pos, quat, color_img, width = self._env.grasp_img2real(rgb_image, depth_image, grasp, depth=depth)
         img = depth_image[
               0, 0, max_index[2] * 8:max_index[2] * 8 + 96, max_index[3] * 8:max_index[3] * 8 + 96
               ].cpu()
-
-        return pos, quat, color_img, depth, img, depth, max_index[1]
+        # print(max_index[1])
+        return pos, quat, color_img, width, img, depth, max_index[1]
     
     def random_place_objects(self, obj_idx, z_pos, scale):
         randomOri = self._env.p.getQuaternionFromEuler((np.random.rand(3) - 0.5) * np.pi / 2)
@@ -117,7 +129,7 @@ class VirtualGraspDataset():
 
     def execute_grasps(self, grasp_result, obj_idx, pos_grasp_init):
         img_tensor = torch.zeros(self._env.numRobots, 1, 96, 96)
-        pose_tensor = torch.zeros((self._env.numRobots, 1))
+        pose_tensor = torch.zeros(self._env.numRobots)
         metric_tensor = torch.zeros(self._env.numRobots)
         mask_tensor = torch.zeros(self._env.numRobots, 32)
         # go straight down
@@ -139,26 +151,27 @@ class VirtualGraspDataset():
             self._env.move_joints(
                 self._env.get_joints_angle(grasp_result[d][0] + [0, d * self._env.d, 0.4], grasp_result[d][1], 1, uid),
                 uid)
-        time.sleep(0.5)
+        time.sleep(1.0)
         for objRobot in range(self._env.numRobots):
             pos_grasp, ori_grasp = self._env.p.getBasePositionAndOrientation(obj_idx[objRobot])
             if pos_grasp[2] - pos_grasp_init[objRobot][2] > 0.1:
                 metric_tensor[objRobot] = 1
-            mask_tensor[objRobot, grasp_result[objRobot][6]:grasp_result[objRobot][6] + 2] = 1
+            mask_tensor[objRobot, 2*grasp_result[objRobot][6]:2*grasp_result[objRobot][6] + 2] = 1
             img_tensor[objRobot, ...] = grasp_result[objRobot][4]
             pose_tensor[objRobot, ...] = grasp_result[objRobot][5]
-        for ind in obj_idx:
-            self._env.p.removeBody(ind)
-        time.sleep(1.0)
+        # for ind in obj_idx:
+            self._env.p.removeBody(obj_idx[objRobot])
+        # time.sleep(1.0)
         for d, uid in enumerate(self._env.robotId):
             self._env.move_joints(self.init_joints_angle, uid)
-        for d, uid in enumerate(self._env.robotId):
-            linkState = self._env.p.getJointState(uid, 2)[0]
-            if linkState > 0:
-                self._env.resetJointPoses(uid)
-                time.sleep(0.2)
-                self._env.move_joints(self.init_joints_angle, uid)
-
+        # for d, uid in enumerate(self._env.robotId):
+        #     linkState = self._env.p.getJointState(uid, 2)[0]
+        #     if linkState > 0:
+        #         self._env.resetJointPoses(uid)
+        #         time.sleep(0.2)
+        #         self._env.move_joints(self.init_joints_angle, uid)
+        # print(pose_tensor)
+        # print(torch.max(img_tensor), torch.min(img_tensor))
         return img_tensor.to(torch.float32), pose_tensor.to(torch.float32),\
                metric_tensor.to(torch.long), mask_tensor.to(torch.long)
 

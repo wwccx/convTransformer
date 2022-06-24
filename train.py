@@ -113,24 +113,27 @@ class gqTrain:
                       prob=1.0, switch_prob=0.5, mode='batch',
                       label_smoothing=0.1, num_classes=1000
                       )
+        if opt.finetune != '':
+            # self.network.load_state_dict(
+            #     torch.load(opt.finetune)['model']
+            # )
+            self.trainDataLoader = VirtualGraspDataset(self.network)
+            if check_point:
+                self.saveDir = check_point
+            else:
+                self.saveDir = os.path.join(saveDir,
+                                            'vfinetune'+datetime.datetime.now().strftime(opt.model + '%y_%m_%d_%H_%M'))
+        os.makedirs(self.saveDir, exist_ok=True)
+        self.num_step_per_epoch = len(self.trainDataLoader)
+        self.lr_scheduler = build_scheduler(opt, optimier=self.optimizer, n_iter_per_epoch=self.num_step_per_epoch)
+
         if check_point:
             self.saveDir = check_point
             logging.info('resuming path:' + self.saveDir)
             self.load_check_point(check_point)
-        else:
-            self.saveDir = os.path.join(saveDir,
-                                        datetime.datetime.now().strftime(opt.model + '%y_%m_%d_%H_%M'))
-            logging.info('save path:'+self.saveDir)
-        if opt.finetune != '':
-            self.network.load_state_dict(
-                torch.load(opt.finetune)['model']
-            )
-            self.trainDataLoader = VirtualGraspDataset(self.network)
-            self.saveDir = os.path.join(saveDir,
-                                        'vfinetune'+datetime.datetime.now().strftime(opt.model + '%y_%m_%d_%H_%M'))
-        os.makedirs(self.saveDir, exist_ok=True)
-        self.num_step_per_epoch = len(self.trainDataLoader)
-        self.lr_scheduler = build_scheduler(opt, optimier=self.optimizer, n_iter_per_epoch=self.num_step_per_epoch)
+
+        logging.info('save path:'+self.saveDir)
+
 
     def train(self, log_frequency=opt.log_frequency, p=None):
         self.network.train()
@@ -299,7 +302,7 @@ class gqTrain:
 
     def fine_tune(self, p, log_frequency=10):
 
-        self.network.train()
+
         avg_loss = 0
         batch_time = 0
         avg_grad = 0
@@ -311,6 +314,7 @@ class gqTrain:
 
         for batchIdx in range(len(self.trainDataLoader)):
             img, pose, target, mask = self.trainDataLoader[batchIdx]
+            self.network.train()
             target = target.to(self.device).squeeze()
             img = img.to(self.device)
             mask = mask.to(self.device)
@@ -377,7 +381,7 @@ class gqTrain:
             self.network.load_state_dict(check_point['model'])
             self.optimizer.load_state_dict(check_point['optimizer'])
             # print(self.optimizer.defaults)
-            # self.lr_scheduler.load_state_dict(check_point['lr_scheduler'])
+            self.lr_scheduler.load_state_dict(check_point['lr_scheduler'])
             self.currentEpoch = check_point['epoch'] + 1
             self.maxAcc = max(self.maxAcc, check_point['accuracy'])
             try:
@@ -385,6 +389,7 @@ class gqTrain:
                 self.loss_value = check_point['loss_hist']
                 self.lr = check_point['lr_hist']
                 self.grad = check_point['grid_hist']
+                self.finetune_acc = np.load(os.path.join(save_path, 'acc_value.npy'))
                 # self.acc_value = check_point['acc']
                 # self.loss_value = check_point['loss']
                 # self.lr = check_point['lr']
@@ -394,6 +399,7 @@ class gqTrain:
                 # self.loss_value = np.load(os.path.join(save_path, 'loss_value.npy'))
                 # self.lr = np.load(os.path.join(save_path, 'lr_value.npy'))
                 self.grad = np.array([])
+                self.finetune_acc = np.array([])
                 pass
         else:
             raise FileNotFoundError('No check points in the path!')
@@ -498,6 +504,7 @@ class gqTrain:
                )
 
         return progress
+
     @staticmethod
     def get_grad_norm(parameters, norm_type=2):
         if isinstance(parameters, torch.Tensor):

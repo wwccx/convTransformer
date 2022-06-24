@@ -266,13 +266,13 @@ class VirtualEnvironment(object):
     def calibrate_camera(self):
         ori = p.getQuaternionFromEuler([0, np.pi / 2, 0])
         self.update_camera()
-        jointPose = self.get_joints_angle([0, 0.0, 0.5], ori, 0)
-        self.move_joints(jointPose)
+        jointPose = self.get_joints_angle([0, 0.0, 0.5], ori, 0, self.robotId[0])
+        self.move_joints(jointPose, self.robotId[0])
 
         plane = [p.loadURDF(os.path.join(self._urdfRoot, 'table_square', 'table_square.urdf'),
                             basePosition=[0.0, 0.0, -0.654 * 0.16 / 0.6 + 0.01],
                             baseOrientation=(0.000000, 0.000000, 0.0, 1.0),
-                            globalScaling=1 * 0.16 / 0.6)]  # length of the square: 0.6
+                            globalScaling=1 * 0.16 / 0.6)]  # length of the original square table: 0.6
         p3d = []
         p2d = []
         shape = (400, 400)
@@ -291,10 +291,10 @@ class VirtualEnvironment(object):
         userParameters.append(self.p.addUserDebugParameter("roll", -math.pi, math.pi, 0.0))
         userParameters.append(self.p.addUserDebugParameter("pitch", -math.pi, math.pi, 1.5774))
         userParameters.append(self.p.addUserDebugParameter("yaw", -math.pi, math.pi, 0))
-        userParameters.append(self.p.addUserDebugParameter('gripper', -3, 3, 0))
+        userParameters.append(self.p.addUserDebugParameter('gripper', -1, 1, 0))
         while 1:
 
-            obs = p.getLinkState(self.robotId, self.endEffectorIndex)
+            obs = p.getLinkState(self.robotId[0], self.endEffectorIndex)
             posEnd = obs[4]
             # oriEnd = obs[5]
             action = []
@@ -304,12 +304,12 @@ class VirtualEnvironment(object):
             # posEnd = action[0:3]
             g = action[-1]
             oriEnd = p.getQuaternionFromEuler([action[3], action[4], action[5]])
-            jointPose = vGrasp.get_joints_angle([action[0], action[1], action[2]], oriEnd, g)
-            vGrasp.move_joints(jointPose)
+            jointPose = vGrasp.get_joints_angle([action[0], action[1], action[2]], oriEnd, g, self.robotId[0])
+            vGrasp.move_joints(jointPose, self.robotId[0])
             rgbImage, depth = self.update_camera()
             pass
             rgbImage = cv2.cvtColor(
-                np.array(rgbImage, dtype=np.uint8), cv2.COLOR_RGBA2BGR
+                np.array(rgbImage[0], dtype=np.uint8), cv2.COLOR_RGBA2BGR
             )
             imageShape = rgbImage.shape
             cv2.imshow('rgb', rgbImage)
@@ -359,7 +359,7 @@ class VirtualEnvironment(object):
         Pobj2cam = np.array([[(xp + dx - 320) / 640], [(yp + dy - 320) / 640], [z]])
         if depth:
             Pobj2cam[2][0] = depth
-        Pobj2cam[2][0] -= 0.1
+        Pobj2cam[2][0] -= 0.15
         Tcam2end = np.array([
             [0, 0, 1, 0.2],
             [-1, 0, 0, 0],
@@ -437,5 +437,6 @@ class VirtualEnvironment(object):
 
 if __name__ == '__main__':
     vGrasp = VirtualEnvironment(num_robots=1)
+    vGrasp.calibrate_camera()
 
 

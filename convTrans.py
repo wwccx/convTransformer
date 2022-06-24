@@ -419,7 +419,7 @@ if __name__ == '__main__':
     net = convTransformer(in_chans=1, num_classes=32, embed_dim=96, depths=(2, 6), num_heads=(3, 12),
                           patch_embedding_size=(4, 4), fully_conv_for_grasp=True).cuda()
     # summary(net, (1, 96, 96))
-    net.load_state_dict(torch.load('gqTransEpoch11.pth')['model'])
+    net.load_state_dict(torch.load('./train/vfinetuneconvTrans22_06_23_22_26/convTransgrasp0926state_epoch18_acc0.2717.pth')['model'])
     net.eval()
     a = torch.zeros((1, 1, 96, 96)).cuda()
     a += 0.55
@@ -427,9 +427,9 @@ if __name__ == '__main__':
     #     a[:, :, i, i:i+20] = 0.49
     a[:, :, 10:-10, 40:-40] = 0.10
     sf = nn.Softmax(dim=2)
-    out = net(a, torch.tensor([0.5, 0.25, 0, -0.25, -0.5]).cuda()).squeeze()
+    out = net(a, torch.tensor([0.7, 0.6, 0.5, 0.4, 0.3, 0.2]).cuda()).squeeze()
     print(out.shape)
-    print(sf(out.view(5, -1, 2)))
+    print(sf(out.view(6, -1, 2)))
     from matplotlib import pyplot as plt
 
     plt.imshow(a[0, 0, :, :].cpu().numpy())
