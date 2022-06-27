@@ -169,7 +169,36 @@ class TSDF(object):
 
         except Exception:
             raise TypeError("camera_extrinsic should be ndarray or tensor")
-
+        # baseCoor = torch.cat([self.baseCoor, torch.ones_like(self.volumeTSDF).unsqueeze(-1)], dim=-1)
+        # cameraCoor = torch.matmul(
+        #     torch.inverse(camera_extrinsic).to(torch.float32), baseCoor.unsqueeze(-1)
+        # )  # (L H W 4 1)
+        # cameraCoorZ = cameraCoor[:, :, :, 2:3, :]  # (L H W 1 1)
+        # cameraPixelIndexCoor = torch.floor(torch.matmul(camera_intrinsic,
+        #                                                 cameraCoor[..., :3, :] / cameraCoorZ)).squeeze()
+        # # get the corresponding pixel index of each voxel  (3 3) @ (L H W 3 1) = (L H W 3 1) = (L H W 3)
+        # validVoxelIndexCoor = torch.where(
+        #     torch.logical_and(
+        #         torch.logical_and(0 <= cameraPixelIndexCoor[..., 0],
+        #                           cameraPixelIndexCoor[..., 0] < 2 * camera_intrinsic[0, 2]),
+        #         torch.logical_and(0 <= cameraPixelIndexCoor[..., 1],
+        #                           cameraPixelIndexCoor[..., 1] < 2 * camera_intrinsic[1, 2])
+        #     )
+        # )  # tuple of index, (x, y, z)
+        #
+        # rendering_image = torch.ones((int(2 * camera_intrinsic[0, 2]), int(2 * camera_intrinsic[1, 2])))
+        #
+        # for i in range(len(validVoxelIndexCoor[0])):
+        #     x = validVoxelIndexCoor[0][i].to(torch.long)
+        #     y = validVoxelIndexCoor[1][i].to(torch.long)
+        #     z = validVoxelIndexCoor[2][i].to(torch.long)
+        #     u, v = cameraPixelIndexCoor[x, y, z, :2].to(torch.long)
+        #     z_depth = cameraCoorZ[x, y, z]
+        #     if self.volumeTSDF[x, y, z] < 0 and z_depth < rendering_image[u, v]:
+        #         rendering_image[u, v] = z_depth
+        #     print('rendering:', i/len(validVoxelIndexCoor[0]))
+        #
+        # return rendering_image
         if not shape:
             shape = (int(2 * camera_intrinsic[1, 2]), int(2 * camera_intrinsic[0, 2]))  # (H, W)
         H, W = shape

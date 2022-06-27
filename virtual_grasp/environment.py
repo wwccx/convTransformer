@@ -84,9 +84,9 @@ class VirtualEnvironment(object):
                            basePosition=[0.0, i * self.d, -0.63 * 1.7],
                            baseOrientation=(0.000000, 0.000000, 0.0, 1.0),
                            globalScaling=1.7, useFixedBase=True)
-            # self.p.changeDynamics(t, -1, mass=0, lateralFriction=6,
-            #                       restitution=0.98, rollingFriction=0.07, spinningFriction=0.15,
-            #                       contactStiffness=1e6, contactDamping=0.5)
+            self.p.changeDynamics(t, -1, mass=0, lateralFriction=6,
+                                  restitution=0.98, rollingFriction=0.07, spinningFriction=0.15,
+                                  contactStiffness=1e6, contactDamping=0.5)
             self.tables.append(t)
 
         robotStartPos = [0.0, 0.0, 1]

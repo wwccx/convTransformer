@@ -23,7 +23,6 @@ from rich.progress import (
     TextColumn,
     TimeRemainingColumn,
 )
-import torch.nn.functional as F
 logging.basicConfig(level=logging.INFO)
 
 
@@ -231,14 +230,8 @@ class gqTrain:
             mask = mask.to(self.device).flatten(0, 1)
             pose = pose.to(self.device).flatten(0, 1)
             target_pre = self.network(*[img, pose])
-            shape = list(target_pre.shape)
-            shape[1] = 2
-            target_pre = target_pre.squeeze()[torch.where(mask > 0)].view(shape)
-            target_pre = F.softmax(target_pre, dim=1)
-            # target_pre = torch.argmax(target_pre, dim=1)
-            # print(target_pre.shape)
-            target_pre = torch.max(target_pre[:, 1, :, :].flatten(1), dim=1)[0] > 0.5
-            target = torch.max(target.flatten(1), dim=1)[0] > 0.5
+            target_pre = target_pre.squeeze()[torch.where(mask > 0)].view(-1, 2)
+            target_pre = torch.argmax(target_pre, dim=1)
             # print(target_pre.shape, target.shape)
             # print(target_pre, target)
             judge_tensor = (target_pre == target)

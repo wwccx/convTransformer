@@ -120,10 +120,7 @@ class GGSCNNGraspDataset(torch.utils.data.Dataset):
     def __getitem__(self, item):
         grasp = torch.from_numpy(np.load(self.grasps_files[item])['arr_0']).squeeze().to(torch.float32)
         img = torch.from_numpy(np.load(self.img_files[item])['arr_0']).squeeze().unsqueeze(1).to(torch.float32)
-        metric_val = torch.from_numpy(np.load(self.metrics_files[item])['arr_0']).squeeze().to(torch.float32)
-        metric = torch.zeros((grasp.shape[0], 12, 12)).to(torch.float32)
-        metric[:, 4:8, 4:8] = metric_val.view(-1, 1, 1).repeat(1, 4, 4)
-        metric = metric.unsqueeze(1)
+        metric = torch.from_numpy(np.load(self.metrics_files[item])['arr_0']).squeeze().to(torch.long)
         angle = torch.rand(8).to(self.device) * np.pi
         mask = torch.zeros(8, 32).to(self.device)
         affine_matrix = torch.zeros((8, 2, 3)).to(self.device)
@@ -131,19 +128,16 @@ class GGSCNNGraspDataset(torch.utils.data.Dataset):
         affine_matrix[:, 0, 1] = torch.sin(angle)
         affine_matrix[:, 1, 0] = -torch.sin(angle)
         affine_matrix[:, 1, 1] = torch.cos(angle)
-        affine_matrix[:, 0, 2] = torch.rand(8).to(self.device) * 2 / 3 - 1 / 3
-        affine_matrix[:, 1, 2] = torch.rand(8).to(self.device) * 2 / 3 - 1 / 3
 
         grid = F.affine_grid(affine_matrix, img.shape, align_corners=False)
         img = F.grid_sample(img, grid, align_corners=False, padding_mode='border')
-        grid = F.affine_grid(affine_matrix, metric.shape, align_corners=False)
-        metric = F.grid_sample(metric, grid, align_corners=False, padding_mode='border')
 
         mask_idx_second_dim = torch.round(angle // self.ANGLE_INTERVAL).to(torch.long)
         mask[self.mask_idx_zero_dim, 2 * mask_idx_second_dim] = 1
         mask[self.mask_idx_zero_dim, 2 * mask_idx_second_dim + 1] = 1
 
-        return img, grasp, torch.round(metric.squeeze()).to(torch.long), mask
+        return img, grasp, metric, mask
+
 
 
 class GraspLossFunction(torch.nn.Module):
@@ -154,11 +148,8 @@ class GraspLossFunction(torch.nn.Module):
 
     def forward(self, inputs, target, mask):
         inputs = inputs.squeeze()
-        shape = list(inputs.shape)
-        shape[1] = 2
-        valid_input = inputs[torch.where(mask > 0)].view(shape)
+        valid_input = inputs[torch.where(mask > 0)].view(-1, 2)
         # target = target * (torch.sum(mask[:, 12:18], dim=1) > 0).to(torch.long)
-        # print(valid_input.shape, target.shape)
         return self.loss_function(valid_input, target)
 
 
