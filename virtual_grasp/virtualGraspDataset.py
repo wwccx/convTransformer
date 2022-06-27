@@ -44,8 +44,8 @@ class VirtualGraspDataset():
                                                globalScaling=s))
             z_pos.append(z)
             scale.append(s)
-            self._env.p.changeDynamics(idx_obj[idx_robot], -1, mass=0, lateralFriction=7,
-                                       restitution=0.98, rollingFriction=5, spinningFriction=5,
+            self._env.p.changeDynamics(idx_obj[idx_robot], -1, mass=0, lateralFriction=15,
+                                       restitution=0.98, rollingFriction=15, spinningFriction=15,
                                        contactStiffness=1e9, contactDamping=5)
         self.obj_count += self._env.numRobots
         self.supervise_model.eval()
@@ -92,12 +92,12 @@ class VirtualGraspDataset():
         for dim in shape[::-1]:
             max_index.append(flatten_max_index % dim)
             flatten_max_index //= dim
-        if torch.rand(1) < 0.7:
+        if torch.rand(1) < 1:
             max_index = max_index[::-1]
             grasp = [
                 48 + max_index[2] * 8,
                 48 + max_index[3] * 8,
-                max_index[1] * np.pi / 16,
+                - max_index[1] * np.pi / 16,
                 72
             ]
             depth = pose[max_index[0]].cpu()

@@ -355,19 +355,20 @@ class convTransformer(nn.Module):
             self.head = nn.Sequential(
                     nn.Conv2d(int(embed_dim * 2 ** (len(depths) - 1)),
                         int(embed_dim * 2 ** (len(depths) - 2)),
-                        kernel_size=3, stride=1
+                        kernel_size=3, stride=1, padding=1, padding_mode='reflect'
                     ),
                     nn.BatchNorm2d(int(embed_dim * 2 ** (len(depths) - 2))),
                     nn.ReLU(),
                     nn.Conv2d(int(embed_dim * 2 ** (len(depths) - 2)),
                         int(embed_dim * 2 ** (len(depths) - 3)),
-                        kernel_size=3, stride=1
+                        kernel_size=3, stride=1, padding=1, padding_mode='reflect'
                     ),
                     nn.BatchNorm2d(int(embed_dim * 2 ** (len(depths) - 3))),
                     nn.ReLU(),
                     nn.Conv2d(int(embed_dim * 2 ** (len(depths) - 3)),
                         num_classes,
-                        kernel_size=96 // patch_embedding_size[0] // 2 ** (len(depths)- 1) - 4, stride=1
+                        # kernel_size=96 // patch_embedding_size[0] // 2 ** (len(depths)- 1) - 4, stride=1
+                        kernel_size=3, stride=1, padding=1, padding_mode='reflect'
                     ),
                 )
         else:
