@@ -96,18 +96,20 @@ class GGSCNNGraspDataset(torch.utils.data.Dataset):
             self.dataset_dir = dataset_dir
         elif pattern == 'validation':
             self.dataset_dir = dataset_dir + '_validation'
-
-        self.grasps_files = glob.glob(os.path.join(self.dataset_dir, '*', 'tensors', 'poseTensor_*.npz'))
+        else:
+            raise ValueError('pattern not supported')
+        a = '*'
+        self.grasps_files = glob.glob(os.path.join(self.dataset_dir, a, 'tensor', 'poseTensor_*.npz'))
         self.grasps_files.sort()
 
-        self.img_files = glob.glob(os.path.join(self.dataset_dir, 'tensors', 'imgTensor_*.npz'))
+        self.img_files = glob.glob(os.path.join(self.dataset_dir, a, 'tensor', 'imgTensor_*.npz'))
         self.img_files.sort()
 
-        self.metrics_files = glob.glob(os.path.join(self.dataset_dir, 'tensors', 'metricTensor_*.npz'))
+        self.metrics_files = glob.glob(os.path.join(self.dataset_dir, a, 'tensor', 'metricTensor_*.npz'))
         self.metrics_files.sort()
-        self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+        self.device = torch.device('cpu' if torch.cuda.is_available() else 'cpu')
         assert len(self.grasps_files) == len(self.img_files) == len(self.metrics_files),\
-               'number of grasp files not match'
+            f'number of grasp files not match, grasp: {len(self.grasps_files)}, img: {len(self.img_files)}, metric: {len(self.metrics_files)}'
         # self.grid = F.affine_grid()
         self.mask_idx_zero_dim = torch.arange(8).to(self.device)
         self.ANGLE_INTERVAL = np.pi / 16
@@ -116,9 +118,9 @@ class GGSCNNGraspDataset(torch.utils.data.Dataset):
         return len(self.grasps_files)
 
     def __getitem__(self, item):
-        grasp = torch.from_numpy(np.load(self.grasps_files[item])['arr_0']).squeeze().to(self.device)
-        img = torch.from_numpy(np.load(self.img_files[item])['arr_0']).squeeze().unsqueeze(1).to(self.device)
-        metric = torch.from_numpy(np.load(self.metrics_files[item])['arr_0']).squeeze().to(self.device)
+        grasp = torch.from_numpy(np.load(self.grasps_files[item])['arr_0']).squeeze().to(torch.float32)
+        img = torch.from_numpy(np.load(self.img_files[item])['arr_0']).squeeze().unsqueeze(1).to(torch.float32)
+        metric = torch.from_numpy(np.load(self.metrics_files[item])['arr_0']).squeeze().to(torch.long)
         angle = torch.rand(8).to(self.device) * np.pi
         mask = torch.zeros(8, 32).to(self.device)
         affine_matrix = torch.zeros((8, 2, 3)).to(self.device)
@@ -130,7 +132,7 @@ class GGSCNNGraspDataset(torch.utils.data.Dataset):
         grid = F.affine_grid(affine_matrix, img.shape, align_corners=False)
         img = F.grid_sample(img, grid, align_corners=False, padding_mode='border')
 
-        mask_idx_second_dim = torch.round(angle / self.ANGLE_INTERVAL).to(torch.long)
+        mask_idx_second_dim = torch.round(angle // self.ANGLE_INTERVAL).to(torch.long)
         mask[self.mask_idx_zero_dim, 2 * mask_idx_second_dim] = 1
         mask[self.mask_idx_zero_dim, 2 * mask_idx_second_dim + 1] = 1
 
@@ -141,7 +143,8 @@ class GGSCNNGraspDataset(torch.utils.data.Dataset):
 class GraspLossFunction(torch.nn.Module):
     def __init__(self):
         super(GraspLossFunction, self).__init__()
-        self.loss_function = torch.nn.CrossEntropyLoss(weight=torch.tensor([1., 20.]).cuda())
+        # self.loss_function = torch.nn.CrossEntropyLoss(weight=torch.tensor([1., 20.]).cuda())
+        self.loss_function = torch.nn.CrossEntropyLoss()
 
     def forward(self, inputs, target, mask):
         inputs = inputs.squeeze()
@@ -151,23 +154,33 @@ class GraspLossFunction(torch.nn.Module):
 
 
 if __name__ == '__main__':
-    dataset = GraspDataset('/home/server/library/parallel_jaw',
-            batch_size=8, pattern='val')
+    dataset = GGSCNNGraspDataset('/home/server/grasp1/virtual_grasp/fine_tune')
+    for i in range(len(dataset)):
+        if dataset.img_files[i][-9:-4] == dataset.grasps_files[i][-9:-4] == dataset.metrics_files[i][-9:-4]:
+            pass
+        else:
+            print(dataset.img_files[i][-9:-4], dataset.grasps_files[i][-9:-4], dataset.metrics_files[i][-9:-4])
+            print(dataset.img_files[i])
+            print(dataset.grasps_files[i])
+            print(dataset.metrics_files[i])
+
     import torch.utils.data as D
     import time
     train_data = D.DataLoader(dataset, batch_size=128//8, num_workers=12)
     print(train_data.__len__())
     num = 0
     t0 = time.time()
-    for img, metric, mask in train_data:
+    total = 0
+    for img, pose, metric, mask in train_data:
         num += torch.sum(metric)
-        #print(img.shape)
+        total += 128
+        print(img.shape)
         # if num % 20 == 0:
         #     print('{:2f}'.format(num/train_data.__len__()))
         #     print((time.time() - t0) / num)
         #print(mask.shape)
         #print(metric.shape)
-    print(num)
+    print(num, total)
     # num = 0
     # l = len(dataset.img_files)
     # for i in range(15912, 17000):

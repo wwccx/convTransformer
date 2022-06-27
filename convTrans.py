@@ -331,8 +331,10 @@ class convTransformer(nn.Module):
             self.layers.append(layer)
         if fully_conv_for_grasp:
             self.avgpool = torch.nn.Identity()
-            self.norm_img = nn.BatchNorm2d(int(embed_dim * 2 ** (len(depths) - 1)))
-            self.norm_pose = nn.BatchNorm2d(int(embed_dim * 2 ** (len(depths) - 1)))
+            # self.norm_img = nn.BatchNorm2d(int(embed_dim * 2 ** (len(depths) - 1)))
+            self.norm_img = nn.Identity()
+            self.norm_pose = nn.Conv2d(int(embed_dim * 2 ** (len(depths) - 1)),
+                    int(embed_dim * 2 ** (len(depths) - 1)), 1, 1, 0)
             #self.res = nn.Sequential(
             #    nn.Conv2d(int(embed_dim * 2 ** (len(depths) - 1)), int(embed_dim * 2 ** (len(depths))),
             #              kernel_size=1, stride=1

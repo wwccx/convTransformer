@@ -75,10 +75,11 @@ def build_dataset(name, batch_size, data_path, transform=None):
         v = D.DataLoader(batch_size=batch_size, dataset=val_data, num_workers=12)
         return t, v
     elif 'grasp' in name.lower():
-        from graspDataset import GraspDataset
-        tdataset = GraspDataset('/home/server/library/parallel_jaw', batch_size=64)
-        vdataset = GraspDataset('/home/server/library/parallel_jaw', batch_size=8, pattern='val')
-        t = D.DataLoader(tdataset, batch_size=batch_size // 64, shuffle=True, num_workers=12)
+        from graspDataset import GGSCNNGraspDataset as GraspDataset
+        tdataset = GraspDataset('/home/server/grasp1/virtual_grasp/fine_tune')
+        vdataset = GraspDataset('/home/server/grasp1/virtual_grasp/fine_tune', pattern='validation')
+        print(batch_size)
+        t = D.DataLoader(tdataset, batch_size=batch_size // 8, shuffle=True, num_workers=12)
         v = D.DataLoader(vdataset, batch_size=batch_size // 8, shuffle=True, num_workers=12)
         return t, v
 
