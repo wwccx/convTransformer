@@ -64,9 +64,9 @@ class gqTrain:
                                                ).to(self.device)
             elif 'grasp' in opt.dataset:
                 self.network = convTransformer(in_chans=1, num_classes=32,
-                        embed_dim=96, depths=(2, 6),
+                        embed_dim=24, depths=(2, 6),
                                                num_heads=(3, 12),
-                                               patch_embedding_size=(4, 4),
+                                               patch_embedding_size=(2, 2),
                                                fully_conv_for_grasp=True).to(self.device)
 
             else:

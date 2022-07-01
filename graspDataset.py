@@ -128,23 +128,24 @@ class GGSCNNGraspDataset(torch.utils.data.Dataset):
         affine_matrix[:, 0, 1] = torch.sin(angle)
         affine_matrix[:, 1, 0] = -torch.sin(angle)
         affine_matrix[:, 1, 1] = torch.cos(angle)
-
+        
         grid = F.affine_grid(affine_matrix, img.shape, align_corners=False)
         img = F.grid_sample(img, grid, align_corners=False, padding_mode='border')
-
+        img_mean = torch.mean(img.flatten(2), dim=2, keepdim=True).unsqueeze(-1)
+        img_std = torch.std(img.flatten(2), dim=2, keepdim=True).unsqueeze(-1)
         mask_idx_second_dim = torch.round(angle // self.ANGLE_INTERVAL).to(torch.long)
         mask[self.mask_idx_zero_dim, 2 * mask_idx_second_dim] = 1
         mask[self.mask_idx_zero_dim, 2 * mask_idx_second_dim + 1] = 1
 
-        return img, grasp, metric, mask
+        return (img - img_mean)/img_std, (grasp - img_mean.squeeze()) / img_std.squeeze(), metric, mask
 
 
 
 class GraspLossFunction(torch.nn.Module):
     def __init__(self):
         super(GraspLossFunction, self).__init__()
-        # self.loss_function = torch.nn.CrossEntropyLoss(weight=torch.tensor([1., 20.]).cuda())
-        self.loss_function = torch.nn.CrossEntropyLoss()
+        self.loss_function = torch.nn.CrossEntropyLoss(weight=torch.tensor([5., 1.]).cuda())
+        # self.loss_function = torch.nn.CrossEntropyLoss()
 
     def forward(self, inputs, target, mask):
         inputs = inputs.squeeze()
