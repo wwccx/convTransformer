@@ -83,7 +83,7 @@ class GraspDataset(torch.utils.data.Dataset):
         mask[np.arange(self.batch_size), np.int32(angle // (np.pi / angular_bins)) * 2] = 1
         mask[np.arange(self.batch_size), np.int32(angle // (np.pi / angular_bins)) * 2 + 1] = 1
 
-        return img, depth, metric, mask
+        return torch.from_numpy(img), torch.from_numpy(depth), torch.from_numpy(metric), torch.from_numpy(mask)
 
     def __len__(self):
         return int(len(self.grasps_files) * self.index_split * 100 / self.batch_size) if self.dataset_partten == 'train' \
@@ -140,12 +140,70 @@ class GGSCNNGraspDataset(torch.utils.data.Dataset):
         return (img - img_mean)/img_std, (grasp - img_mean.squeeze()) / img_std.squeeze(), metric, mask
 
 
+class GGSCNNGraspDatasetZip(torch.utils.data.Dataset):
+    def __init__(self, dataset_dir, pattern='train', batch_size=64):
+        self.dataset_dir = os.path.join(dataset_dir, pattern)
+        self.files = glob.glob(os.path.join(self.dataset_dir, 'Tensor_*.npz'))
+        self.files.sort()
+        self.len_files = len(self.files)
+        self.device = torch.device('cpu' if torch.cuda.is_available() else 'cpu')
+        self.batch_size = batch_size
+        self.mask_idx_zero_dim = torch.arange(batch_size).to(self.device)
+        self.ANGLE_INTERVAL = np.pi / 16
+
+    def __len__(self):
+        return len(self.files) * (256 // self.batch_size)
+
+    def __getitem__(self, item):
+        item = item % (self.len_files)
+        tensor = np.load(self.files[item])
+        choice = torch.randperm(256)[:self.batch_size]
+        grasp = torch.from_numpy(tensor['pose']).squeeze().to(torch.float32)[choice, ...]
+        img = torch.from_numpy(tensor['img']).squeeze().unsqueeze(1).to(torch.float32)[choice, ...]
+        metric = torch.from_numpy(tensor['metric']).squeeze().to(torch.long)[choice, ...]
+        angle = torch.rand(self.batch_size).to(self.device) * np.pi
+        mask = torch.zeros(self.batch_size, 32).to(self.device)
+
+
+        affine_matrix = torch.zeros((self.batch_size, 2, 3)).to(self.device)
+        affine_matrix[:, 0, 0] = torch.cos(angle)
+        affine_matrix[:, 0, 1] = torch.sin(angle)
+        affine_matrix[:, 1, 0] = -torch.sin(angle)
+        affine_matrix[:, 1, 1] = torch.cos(angle)
+
+        grid = F.affine_grid(affine_matrix, img.shape, align_corners=False)
+        img = F.grid_sample(img, grid, align_corners=False, padding_mode='border')
+
+        img_mean = torch.mean(img.flatten(2), dim=2, keepdim=True).unsqueeze(-1)
+        img_std = torch.std(img.flatten(2), dim=2, keepdim=True).unsqueeze(-1)
+
+        mask_idx_second_dim = torch.div(angle,  self.ANGLE_INTERVAL, rounding_mode='floor').to(torch.long)
+        mask[self.mask_idx_zero_dim, 2 * mask_idx_second_dim] = 1
+        mask[self.mask_idx_zero_dim, 2 * mask_idx_second_dim + 1] = 1
+
+        return (img - img_mean)/img_std, (grasp - img_mean.squeeze()) / img_std.squeeze(), metric, mask
+
+
+class MixupGraspDataset(torch.utils.data.Dataset):
+    def __init__(self, dataset_dir, pattern='train', batch_size=64):
+        self.parallel_data = GraspDataset(os.path.join(dataset_dir, 'parallel_jaw'), pattern, batch_size)
+        self.bullet_data = GGSCNNGraspDatasetZip(os.path.join(dataset_dir, 'grasp'), pattern, batch_size)
+        self.len_para = len(self.parallel_data)
+        self.len_bullet = len(self.bullet_data)
+    def __len__(self):
+        return self.len_para + self.len_bullet
+    
+    def __getitem__(self, item):
+        if item < self.len_para:
+            return self.parallel_data[item]
+        else:
+            return self.bullet_data[item - self.len_para]
 
 class GraspLossFunction(torch.nn.Module):
     def __init__(self):
         super(GraspLossFunction, self).__init__()
-        self.loss_function = torch.nn.CrossEntropyLoss(weight=torch.tensor([5., 1.]).cuda())
-        # self.loss_function = torch.nn.CrossEntropyLoss()
+        # self.loss_function = torch.nn.CrossEntropyLoss(weight=torch.tensor([5., 1.]).cuda())
+        self.loss_function = torch.nn.CrossEntropyLoss()
 
     def forward(self, inputs, target, mask):
         inputs = inputs.squeeze()
@@ -155,26 +213,19 @@ class GraspLossFunction(torch.nn.Module):
 
 
 if __name__ == '__main__':
-    dataset = GGSCNNGraspDataset('/home/server/grasp1/virtual_grasp/fine_tune')
-    for i in range(len(dataset)):
-        if dataset.img_files[i][-9:-4] == dataset.grasps_files[i][-9:-4] == dataset.metrics_files[i][-9:-4]:
-            pass
-        else:
-            print(dataset.img_files[i][-9:-4], dataset.grasps_files[i][-9:-4], dataset.metrics_files[i][-9:-4])
-            print(dataset.img_files[i])
-            print(dataset.grasps_files[i])
-            print(dataset.metrics_files[i])
-
+    # dataset = GGSCNNGraspDataset('/home/server/convTransformer/data')
+    dataset = MixupGraspDataset('/home/server/convTransformer/data', batch_size=64, pattern='train')
+    print(len(dataset))
     import torch.utils.data as D
     import time
-    train_data = D.DataLoader(dataset, batch_size=128//8, num_workers=12)
-    print(train_data.__len__())
+    train_data = D.DataLoader(dataset, batch_size=256//64, shuffle=True, num_workers=12)
+    # print(len(train_data))
     num = 0
     t0 = time.time()
     total = 0
     for img, pose, metric, mask in train_data:
         num += torch.sum(metric)
-        total += 128
+        total += 256
         print(img.shape)
         # if num % 20 == 0:
         #     print('{:2f}'.format(num/train_data.__len__()))

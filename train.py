@@ -64,9 +64,9 @@ class gqTrain:
                                                ).to(self.device)
             elif 'grasp' in opt.dataset:
                 self.network = convTransformer(in_chans=1, num_classes=32,
-                        embed_dim=24, depths=(2, 6),
+                                               embed_dim=96, depths=(2, 6),
                                                num_heads=(3, 12),
-                                               patch_embedding_size=(2, 2),
+                                               patch_embedding_size=(4, 4),
                                                fully_conv_for_grasp=True).to(self.device)
 
             else:
@@ -153,7 +153,7 @@ class gqTrain:
         for img, pose, target, mask in self.trainDataLoader:
             # if batchIdx > 20:
             #     break
-            target = target.to(self.device).squeeze().flatten(0, 1)
+            target = target.to(self.device).flatten(0, 1)
             img = img.to(self.device).flatten(0, 1)
             mask = mask.to(self.device).flatten(0, 1)
             pose = pose.to(self.device).flatten(0, 1)
