@@ -17,6 +17,7 @@ from timm.data import Mixup
 from timm.loss import SoftTargetCrossEntropy
 from apex import amp
 from virtual_grasp.virtualGraspDataset import VirtualGraspDataset
+from torchmetrics import AveragePrecision as AP
 from rich.progress import (
     BarColumn,
     Progress,
@@ -151,8 +152,8 @@ class gqTrain:
 
         # for img, target in self.trainDataLoader:
         for img, pose, target, mask in self.trainDataLoader:
-            # if batchIdx > 20:
-            #     break
+            if batchIdx > 20:
+                break
             target = target.to(self.device).flatten(0, 1)
             img = img.to(self.device).flatten(0, 1)
             mask = mask.to(self.device).flatten(0, 1)
@@ -224,6 +225,8 @@ class gqTrain:
         negative_pre = torch.tensor(0.1).cuda()
         total_positive_pre = torch.tensor(0.1).cuda()
         total_negative_pre = torch.tensor(0.1).cuda()
+        ap = AP()
+
         for img, pose, target, mask in self.valDataLoader:
             target = target.to(self.device).flatten(0, 1)
             img = img.to(self.device).flatten(0, 1)
@@ -231,6 +234,8 @@ class gqTrain:
             pose = pose.to(self.device).flatten(0, 1)
             target_pre = self.network(*[img, pose])
             target_pre = target_pre.squeeze()[torch.where(mask > 0)].view(-1, 2)
+            target_pre = torch.nn.functional.softmax(target_pre, dim=1)
+            ap.update(target_pre[:, 1], target)
             target_pre = torch.argmax(target_pre, dim=1)
             # print(target_pre.shape, target.shape)
             # print(target_pre, target)
@@ -257,7 +262,9 @@ class gqTrain:
                     negative_accuracy=100*negative_pre/total_negative_pre)
         # print(success_pre, total_pre, positive_pre, total_positive_pre,
         #         negative_pre, total_negative_pre)
-        return success_pre/total_pre
+        map = ap.compute()
+        print()
+        return map
 
     def save(self, epoch, accuracy):
         dt = datetime.datetime.now().strftime('%H%M')

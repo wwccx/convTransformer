@@ -138,7 +138,7 @@ class GGSCNNGraspDataset(torch.utils.data.Dataset):
         mask[self.mask_idx_zero_dim, 2 * mask_idx_second_dim + 1] = 1
 
         return (img - img_mean)/img_std, (grasp - img_mean.squeeze()) / img_std.squeeze(), metric, mask
-
+        # return img, grasp, metric, mask
 
 class GGSCNNGraspDatasetZip(torch.utils.data.Dataset):
     def __init__(self, dataset_dir, pattern='train', batch_size=64):
@@ -181,6 +181,7 @@ class GGSCNNGraspDatasetZip(torch.utils.data.Dataset):
         mask[self.mask_idx_zero_dim, 2 * mask_idx_second_dim] = 1
         mask[self.mask_idx_zero_dim, 2 * mask_idx_second_dim + 1] = 1
 
+        return img, grasp, metric, mask
         return (img - img_mean)/img_std, (grasp - img_mean.squeeze()) / img_std.squeeze(), metric, mask
 
 
@@ -223,10 +224,15 @@ if __name__ == '__main__':
     num = 0
     t0 = time.time()
     total = 0
+    from matplotlib import pyplot as plt
     for img, pose, metric, mask in train_data:
         num += torch.sum(metric)
         total += 256
         print(img.shape)
+        idx = 2
+        print(pose[0, idx], metric[0, idx])
+        plt.imshow(img[0, idx, 0, ...])
+        plt.show()
         # if num % 20 == 0:
         #     print('{:2f}'.format(num/train_data.__len__()))
         #     print((time.time() - t0) / num)

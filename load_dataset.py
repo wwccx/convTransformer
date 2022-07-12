@@ -75,14 +75,14 @@ def build_dataset(name, batch_size, data_path, transform=None):
         v = D.DataLoader(batch_size=batch_size, dataset=val_data, num_workers=12)
         return t, v
     elif 'grasp' in name.lower():
-        from graspDataset import GGSCNNGraspDatasetZip as GraspDataset
+        from graspDataset import MixupGraspDataset as GraspDataset
         # tdataset = GraspDataset('/home/server/grasp1/virtual_grasp/fine_tune')
         # vdataset = GraspDataset('/home/server/grasp1/virtual_grasp/fine_tune', pattern='validation')
-        tdataset = GraspDataset('/home/server/convTransformer/data/grasp')
-        vdataset = GraspDataset('/home/server/convTransformer/data/grasp', pattern='val')
+        tdataset = GraspDataset('/home/server/convTransformer/data', batch_size=64)
+        vdataset = GraspDataset('/home/server/convTransformer/data', pattern='val', batch_size=8)
         print(batch_size)
-        t = D.DataLoader(tdataset, batch_size=batch_size // 256, shuffle=True, num_workers=12)
-        v = D.DataLoader(vdataset, batch_size=batch_size // 256, shuffle=True, num_workers=12)
+        t = D.DataLoader(tdataset, batch_size=batch_size // 64, shuffle=True, num_workers=12)
+        v = D.DataLoader(vdataset, batch_size=batch_size // 8, shuffle=True, num_workers=12)
         return t, v
 
     else:
