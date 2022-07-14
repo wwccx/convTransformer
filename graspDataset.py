@@ -199,11 +199,15 @@ class MixupGraspDataset(torch.utils.data.Dataset):
         else:
             return self.bullet_data[item - self.len_para]
 
+
 class GraspLossFunction(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, loss_fun=None):
         super(GraspLossFunction, self).__init__()
         # self.loss_function = torch.nn.CrossEntropyLoss(weight=torch.tensor([5., 1.]).cuda())
-        self.loss_function = torch.nn.CrossEntropyLoss()
+        if loss_fun is None:
+            self.loss_function = torch.nn.CrossEntropyLoss()
+        else:
+            self.loss_function = loss_fun
 
     def forward(self, inputs, target, mask):
         inputs = inputs.squeeze()

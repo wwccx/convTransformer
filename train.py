@@ -80,7 +80,11 @@ class gqTrain:
             else:
                 self.lossFun = torch.nn.CrossEntropyLoss()
         else:
-            self.lossFun = SoftTargetCrossEntropy()
+            if config.DATA.DATASET == 'grasp':
+                from graspDataset import GraspLossFunction
+                self.lossFun = GraspLossFunction(SoftTargetCrossEntropy())
+            else:
+                self.lossFun = SoftTargetCrossEntropy()
 
         self.gradNormVal = config.TRAIN.CLIP_GRAD
         self.mixup = Mixup(mixup_alpha=config.DATA.MIXUP.MIXUP_ALPHA,
@@ -90,7 +94,7 @@ class gqTrain:
                            switch_prob=config.DATA.MIXUP.SWITCH_PROB,
                            mode=config.DATA.MIXUP.MODE,
                            label_smoothing=config.DATA.MIXUP.LABEL_SMOOTHING,
-                           num_classes=config.DATA.NUM_CLASSES
+                           num_classes=config.DATA.MIXUP.NUM_CLASSES
                            )
         self.saveDir = ''
         if opt.finetune != '' and opt.finetune.endswith('.pth'):
