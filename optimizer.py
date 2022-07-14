@@ -1,19 +1,26 @@
 from torch import optim as optim
 from ATTCG import ATTCG
 
-def build_optimizer(config, model):
 
-    _optim = config.optim
+def build_optimizer(config, model):
+    _optim = config.TRAIN.OPTIMIZER.TYPE
     if _optim.lower() == 'adamw':
         skip_keywords = {}
         if hasattr(model, 'no_weight_decay_keywords'):
             skip_keywords = model.no_weight_decay_keywords()
         parameters = set_weight_decay(model, skip_keywords)
 
-        optimizer = optim.AdamW(parameters, eps=1e-8, betas=(0.9, 0.999),
-                            lr=2.5e-4, weight_decay=0.05)  # 1.25e-4
+        optimizer = optim.AdamW(parameters,
+                                eps=config.TRAIN.OPTIMIZER.EPS,
+                                betas=config.TRAIN.OPTIMIZER.BETA,
+                                lr=config.TRAIN.BASE_LR,
+                                weight_decay=config.TRAIN.OPTIMIZER.WEIGHT_DECAY)  # 1.25e-4
+
     elif _optim.lower() == 'attcg':
-        optimizer = ATTCG(model.parameters(), lr=1.25e-4) 
+        optimizer = ATTCG(model.parameters(), lr=config.TRAIN.BASE_LR)
+    else:
+        raise NotImplementedError(f"Optimizer {_optim} is not implemented")
+
     return optimizer
 
 

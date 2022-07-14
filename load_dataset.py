@@ -5,7 +5,9 @@ import os
 import torch
 
 
-def build_dataset(name, batch_size, data_path, transform=None):
+def build_dataset(config, data_path='./data', transform=None):
+    name = config.DATA.DATASET
+    batch_size = config.DATA.BATCH_SIZE
     dataset_dict = {
         'root': data_path,
         'train': True,
@@ -78,9 +80,9 @@ def build_dataset(name, batch_size, data_path, transform=None):
         from graspDataset import MixupGraspDataset as GraspDataset
         # tdataset = GraspDataset('/home/server/grasp1/virtual_grasp/fine_tune')
         # vdataset = GraspDataset('/home/server/grasp1/virtual_grasp/fine_tune', pattern='validation')
-        tdataset = GraspDataset('/home/server/convTransformer/data', batch_size=64)
-        vdataset = GraspDataset('/home/server/convTransformer/data', pattern='val', batch_size=8)
-        print(batch_size)
+        tdataset = GraspDataset(data_path, batch_size=64)
+        vdataset = GraspDataset(data_path, pattern='val', batch_size=8)
+        # print(batch_size)
         t = D.DataLoader(tdataset, batch_size=batch_size // 64, shuffle=True, num_workers=12)
         v = D.DataLoader(vdataset, batch_size=batch_size // 8, shuffle=True, num_workers=12)
         return t, v

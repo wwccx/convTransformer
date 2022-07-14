@@ -181,7 +181,6 @@ class GGSCNNGraspDatasetZip(torch.utils.data.Dataset):
         mask[self.mask_idx_zero_dim, 2 * mask_idx_second_dim] = 1
         mask[self.mask_idx_zero_dim, 2 * mask_idx_second_dim + 1] = 1
 
-        return img, grasp, metric, mask
         return (img - img_mean)/img_std, (grasp - img_mean.squeeze()) / img_std.squeeze(), metric, mask
 
 

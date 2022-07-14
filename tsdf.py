@@ -6,6 +6,7 @@ from hardware.camera import RS
 from hardware.Ursocket import UrSocket
 from torch.utils.cpp_extension import load
 import tf.transformations as tft
+from torchvision.transforms.functional import resize
 
 
 class Image(object):
@@ -49,25 +50,38 @@ class Image(object):
         if not isinstance(d, torch.device):
             raise TypeError('device must be torch.device')
         if isinstance(self.depth_raw, np.ndarray):
-            self.depth_raw = torch.from_numpy(self.depth_raw).to(d)
-            self.rgb_raw = torch.from_numpy(self.rgb_raw).to(d)
+            self.depth_raw = torch.from_numpy(self.depth_raw).to(d).unsqueeze(0).unsqueeze(0)
+            self.rgb_raw = torch.from_numpy(self.rgb_raw).to(d).permute(2, 0, 1).unsqueeze(0)
             self.camera_pos = torch.from_numpy(self.camera_pos).to(d)
             if self.camera_intr is not None:
                 self.camera_intr = torch.from_numpy(self.camera_intr).to(d)
         elif isinstance(self.depth_raw, torch.Tensor):
-            self.depth_raw = self.depth_raw.to(d)
-            self.rgb_raw = self.rgb_raw.to(d)
+            self.depth_raw = self.depth_raw.to(d).unsqueeze(0).unsqueeze(0)
+            self.rgb_raw = self.rgb_raw.to(d).unsqueeze(0)
             self.camera_pos = self.camera_pos.to(d)
             if self.camera_intr is not None:
                 self.camera_intr = self.camera_intr.to(d)
         else:
             raise TypeError('The image data must be np.ndarray or torch.Tensor')
 
+    def resize(self, shape: list):
+        if isinstance(self.depth_raw, np.ndarray):
+            self.depth_raw = cv2.resize(self.depth_raw, tuple(shape))
+            self.rgb_raw = cv2.resize(self.rgb_raw, tuple(shape))
+        elif isinstance(self.depth_raw, torch.Tensor):
+            self.depth_raw = resize(self.depth_raw, shape)
+            self.rgb_raw = resize(self.rgb_raw, shape)
+        else:
+            raise TypeError('The image data must be np.ndarray or torch.Tensor')
+        self.H, self.W = shape
+
     @staticmethod
-    def in_paint(depth_img, val=0):
+    def in_paint(depth_img, val=0.1):
         depth_img = np.array(depth_img).astype(np.float32)
+        depth_img = cv2.GaussianBlur(depth_img, (3, 3), 0.2)
+        # depth_img = cv2.Laplacian(depth_img, cv2.CV_32F, ksize=3)
         depth_img = cv2.copyMakeBorder(depth_img, 10, 10, 10, 10, cv2.BORDER_DEFAULT)
-        mask = (depth_img == val).astype(np.uint8)
+        mask = (depth_img <= val).astype(np.uint8)
 
         depth_img = depth_img.astype(np.float32)  # Has to be float32, 64 not supported.
         depth_img = cv2.inpaint(depth_img, mask, 1, cv2.INPAINT_NS)
@@ -75,6 +89,75 @@ class Image(object):
         depth_img = depth_img[10:-10, 10:-10]
 
         return depth_img
+
+    def depth(self):
+        if isinstance(self.depth_raw, np.ndarray):
+            return self.depth_raw
+        elif isinstance(self.depth_raw, torch.Tensor):
+            return self.depth_raw.cpu().squeeze()
+        else:
+            raise TypeError('Check the image data type')
+
+    def color(self):
+        if isinstance(self.rgb_raw, np.ndarray):
+            return self.rgb_raw
+        elif isinstance(self.rgb_raw, torch.Tensor):
+            return self.rgb_raw.permute(0, 2, 3, 1).contiguous().cpu().squeeze().numpy().astype(np.uint8)
+        else:
+            raise TypeError('Check the image data type')
+
+
+
+class Grasp(object):
+    def __init__(self,
+                 image: Image,
+                 net=None,
+                 ):
+
+        self.image = image
+        self.camera_pos = image.camera_pos
+        self.camera_intr = image.camera_intr
+        self._grasp = {
+            'pixel_idx': (0, 0),
+            'depth': 0,
+            'angle': 0,
+            'grasp_pose': np.eyes(4),
+            'trans_vec': np.zeros(3),
+            'rotation_mat': np.eye3(3)
+        }
+        if net is not None:
+            self.plan_grasp(net)
+
+    def plan_grasp(self, net, depth_resolution=1e-2, depth_bin=10, network_depth_bias=0.05):
+        """
+        :return:
+        """
+        sf = torch.nn.Softmax(dim=2)
+        self.image.to(self.image.device)
+        d = self.image.depth_raw.unsqueeze(0).unsqueeze(0)
+        depth = torch.arange(depth_bin).cuda() * depth_resolution + torch.min(d)
+        res = net(d, depth - network_depth_bias)
+        s = list(res.shape)
+        s[1] = [16, 2]
+        res = res.reshape(s)
+        res = sf(res)[:, :, 1, ...]  # B, 16, H, W
+        s[2] = []
+        index = self.get_tensor_idx(s, torch.argmax(res).detach().cpu().item())  # depth, angle, y, x
+        self._grasp['pixel_idx'] = index[-2], index[-1]
+        self._grasp['depth'] = depth[index[0]].item()
+        self._grasp['angle'] = index[1] * np.pi / 16
+
+
+    @staticmethod
+    def get_tensor_idx(shape, arg_max):
+        idx = []
+        for i in shape[::-1]:
+            idx.append(arg_max % i)
+            arg_max = arg_max // i
+        return idx[::-1]
+
+
+
 
 
 class TSDF(object):

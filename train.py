@@ -11,6 +11,7 @@ from torchsummary import summary
 from torchvision import models as models
 from load_dataset import build_dataset
 from lr_scheduler import build_scheduler
+from load_model import build_model
 from swin_transformer import SwinTransformer
 from optimizer_swin import build_optimizer as swin_optim
 from timm.data import Mixup
@@ -24,12 +25,13 @@ from rich.progress import (
     TextColumn,
     TimeRemainingColumn,
 )
+from config import update_config
+
 logging.basicConfig(level=logging.INFO)
 
-
 parser = argparse.ArgumentParser()
-parser.add_argument("--n_epochs", type=int, default=300, help="number of epochs of training")
-parser.add_argument("--batch_size", type=int, default=128, help="size of the batches")
+parser.add_argument("--n_epochs", type=int, default=20, help="number of epochs of training")
+parser.add_argument("--batch_size", type=int, default=256, help="size of the batches")
 parser.add_argument("--log_frequency", type=int, default=10, help="log info per batches")
 parser.add_argument("--model", type=str, default='convTrans', help="the trained model")
 parser.add_argument("--dataset", type=str, default='imagenet', help='the dataset')
@@ -40,7 +42,8 @@ parser.add_argument('--amp_level', type=str, default='O1', choices=['O0', 'O1', 
 parser.add_argument("--mixup", type=bool, default=False)
 parser.add_argument("--finetune", type=str, default='')
 opt = parser.parse_args()
-print(opt)
+config = update_config(opt)
+logging.info(config)
 
 
 class gqTrain:
@@ -50,43 +53,13 @@ class gqTrain:
 
         self.dataDir = dataDir
 
-        self.trainDataLoader, self.valDataLoader = build_dataset(
-            name=opt.dataset,
-            batch_size=opt.batch_size,
-            data_path='./data'
-        )
-        # self.trainDataLoader = []
+        self.trainDataLoader, self.valDataLoader = build_dataset(config)
 
         logging.info('data set loaded')
-        if 'convTrans' in opt.model:
-            if 'vib' in opt.dataset:
-                self.network = convTransformer(num_classes=2, in_chans=1, window_size=(1, 3),
-                                               patch_embedding_size=(1, 32), patch_merging_size=(1, 2),
-                                               ).to(self.device)
-            elif 'grasp' in opt.dataset:
-                self.network = convTransformer(in_chans=1, num_classes=32,
-                                               embed_dim=96, depths=(2, 6),
-                                               num_heads=(3, 12),
-                                               patch_embedding_size=(4, 4),
-                                               fully_conv_for_grasp=True).to(self.device)
+        self.network = build_model(config).to(self.device)
+        logging.info('model loaded')
+        self.optimizer = build_optimizer(config, self.network)
 
-            else:
-                self.network = convTransformer(B=opt.batch_size,
-                                               num_classes=10).to(self.device)
-            self.optimizer = build_optimizer(opt, self.network)
-            for p in self.optimizer.param_groups:
-                logging.info('current lr:{}'.format(p['lr']))
-        elif 'gqcnn' in opt.model:
-            self.network = GQCNN().to(self.device)
-            self.optimizer = build_optimizer(opt, self.network)
-        elif 'res' in opt.model:
-            self.network = models.resnet50(num_classes=10).to(self.device)
-            self.optimizer = build_optimizer(opt, self.network)
-
-        else:
-            # self.network = models.resnet50(num_classes=10).to(self.device)
-            self.network = SwinTransformer(num_classer=10).to(self.device)
-            self.optimizer = swin_optim(self.network)
         if opt.amp_level != 'O0':
             self.network, self.optimizer = amp.initialize(self.network, self.optimizer, opt_level=opt.amp_level)
 
@@ -100,8 +73,8 @@ class gqTrain:
         self.grad = np.array([])
         self.finetune_acc = np.array([])
         self.maxAcc = 0
-        if not opt.mixup:
-            if 'grasp' in opt.dataset:
+        if not config.DATA.MIXUP_ON:
+            if config.DATA.DATASET == 'grasp':
                 from graspDataset import GraspLossFunction
                 self.lossFun = GraspLossFunction()
             else:
@@ -109,35 +82,40 @@ class gqTrain:
         else:
             self.lossFun = SoftTargetCrossEntropy()
 
-        self.gradNormVal = 0
-        self.mixup = Mixup(mixup_alpha=0.8, cutmix_alpha=1.0, cutmix_minmax=None,
-                      prob=1.0, switch_prob=0.5, mode='batch',
-                      label_smoothing=0.1, num_classes=1000
-                      )
+        self.gradNormVal = config.TRAIN.CLIP_GRAD
+        self.mixup = Mixup(mixup_alpha=config.DATA.MIXUP.MIXUP_ALPHA,
+                           cutmix_alpha=config.DATA.MIXUP.CUTMIX_ALPHA,
+                           cutmix_minmax=config.DATA.MIXUP.CUTMIX_MINMAX,
+                           prob=config.DATA.MIXUP.PROB,
+                           switch_prob=config.DATA.MIXUP.SWITCH_PROB,
+                           mode=config.DATA.MIXUP.MODE,
+                           label_smoothing=config.DATA.MIXUP.LABEL_SMOOTHING,
+                           num_classes=config.DATA.NUM_CLASSES
+                           )
         self.saveDir = ''
-        if opt.finetune != '':
-            # self.network.load_state_dict(
-            #     torch.load(opt.finetune)['model']
-            # )
-            self.trainDataLoader = VirtualGraspDataset(self.network)
+        if opt.finetune != '' and opt.finetune.endswith('.pth'):
+            self.network.load_state_dict(
+                torch.load(opt.finetune)['model']
+            )
+            # self.trainDataLoader = VirtualGraspDataset(self.network)
             if check_point:
                 self.saveDir = check_point
             else:
                 self.saveDir = os.path.join(saveDir,
-                                            'vfinetune'+datetime.datetime.now().strftime(opt.model + '%y_%m_%d_%H_%M'))
+                                            'finetune' + datetime.datetime.now().strftime(opt.model + '%y_%m_%d_%H_%M'))
         if self.saveDir == '':
             self.saveDir = os.path.join(saveDir, datetime.datetime.now().strftime(opt.model + '%y_%m_%d_%H_%M'))
         os.makedirs(self.saveDir, exist_ok=True)
+        torch.save({'config': config}, os.path.join(self.saveDir, 'config.pth'))
         self.num_step_per_epoch = len(self.trainDataLoader)
-        self.lr_scheduler = build_scheduler(opt, optimier=self.optimizer, n_iter_per_epoch=self.num_step_per_epoch)
+        self.lr_scheduler = build_scheduler(config, optimier=self.optimizer, n_iter_per_epoch=self.num_step_per_epoch)
 
         if check_point:
             self.saveDir = check_point
             logging.info('resuming path:' + self.saveDir)
             self.load_check_point(check_point)
 
-        logging.info('save path:'+self.saveDir)
-
+        logging.info('save path:' + self.saveDir)
 
     def train(self, log_frequency=opt.log_frequency, p=None):
         self.network.train()
@@ -177,7 +155,7 @@ class gqTrain:
             if self.gradNormVal:
                 grad_norm = torch.nn.utils.clip_grad_norm_(self.network.parameters(), self.gradNormVal)
                 self.grad = np.append(self.grad, grad_norm.item())
-                avg_grad = (batchIdx * avg_grad + grad_norm.item()) / (batchIdx + 1) 
+                avg_grad = (batchIdx * avg_grad + grad_norm.item()) / (batchIdx + 1)
             else:
                 grad_norm = self.get_grad_norm(self.network.parameters())
                 if not np.isinf(grad_norm):
@@ -187,7 +165,7 @@ class gqTrain:
             avg_loss = (batchIdx * avg_loss + loss.item()) / (batchIdx + 1)
             if (batchIdx + 1) % log_frequency == 0:
                 # self.loss_value = np.append(self.loss_value, loss.item())
-                batch_time = (time.time()-t0)/log_frequency
+                batch_time = (time.time() - t0) / log_frequency
                 # logging.info('\r Epoch:{}--{:.4f}%, loss:{:.6e}, batch time:{:.3f}s, epoch remain:{:.2f}min'
                 #              .format(self.currentEpoch, 100*batchIdx/self.num_step_per_epoch,
                 #                      loss.item(),
@@ -219,7 +197,7 @@ class gqTrain:
         success_pre = torch.tensor(0.1).cuda()
         total_pre = torch.tensor(0.1).cuda()
         tid = p.add_task(f'Validation:{self.currentEpoch}', accuracy=0,
-                positive_accuracy=0, negative_accuracy=0)
+                         positive_accuracy=0, negative_accuracy=0)
         p.update(tid, total=len(self.valDataLoader))
         positive_pre = torch.tensor(0.1).cuda()
         negative_pre = torch.tensor(0.1).cuda()
@@ -246,7 +224,7 @@ class gqTrain:
             positive_judge = judge_tensor[torch.where(target > 0)]
             total_positive_pre += len(positive_judge)
             positive_pre += torch.sum(positive_judge)
-            
+
             negative_judge = judge_tensor[torch.where(target == 0)]
             total_negative_pre += len(negative_judge)
             negative_pre += torch.sum(negative_judge)
@@ -257,9 +235,9 @@ class gqTrain:
             #                          100*success_pre/total_pre)
             #                  )
             valBatchIdx += 1
-            p.update(tid, advance=1, accuracy=100*success_pre/total_pre,
-                    positive_accuracy=100*positive_pre/total_positive_pre,
-                    negative_accuracy=100*negative_pre/total_negative_pre)
+            p.update(tid, advance=1, accuracy=100 * success_pre / total_pre,
+                     positive_accuracy=100 * positive_pre / total_positive_pre,
+                     negative_accuracy=100 * negative_pre / total_negative_pre)
         # print(success_pre, total_pre, positive_pre, total_positive_pre,
         #         negative_pre, total_negative_pre)
         map = ap.compute()
@@ -280,8 +258,7 @@ class gqTrain:
             'grid_hist': self.grad
         }
         if accuracy < 0:
-            save_path = os.path.join(self.saveDir,
-                    'temp_epoch.pth')
+            save_path = os.path.join(self.saveDir, 'temp_epoch_train.pth')
             torch.save(save_state, save_path)
             return
         save_path = os.path.join(self.saveDir,
@@ -312,7 +289,6 @@ class gqTrain:
 
     def fine_tune(self, p, log_frequency=10):
 
-
         avg_loss = 0
         batch_time = 0
         avg_grad = 0
@@ -333,7 +309,7 @@ class gqTrain:
             loss = self.lossFun(target_pre, target, mask)
             self.loss_value = np.append(self.loss_value, loss.item())
             self.lr = np.append(self.lr, self.optimizer.param_groups[0]['lr'])
-            self.finetune_acc = np.append(self.finetune_acc, torch.sum(target).item()/len(target))
+            self.finetune_acc = np.append(self.finetune_acc, torch.sum(target).item() / len(target))
             self.optimizer.zero_grad()
             if opt.amp_level != "O0":
                 with amp.scale_loss(loss, self.optimizer) as scaled_loss:
@@ -462,22 +438,22 @@ class gqTrain:
         if partten == 'train':
 
             progress = Progress(
-               TextColumn("[bold blue]{task.description}", justify="right"),
-               "[progress.percentage]{task.percentage:>.3f}%",
-               BarColumn(bar_width=None),
-               "•",
-               TextColumn("lr:{task.fields[lr]:>5.4e}"),
-               "•",
-               TextColumn("L:{task.fields[loss]:>6.5e}"),
-               "•",
-               TextColumn("avgL:{task.fields[avg_loss]:>6.5e}"),
-               "•",
-               TextColumn("Grad:{task.fields[avg_grad]:>5.4e}"),
-               "•",
-               TextColumn("bTime:{task.fields[batch_time]:>.3f}s"),
-               "•",
-               TimeRemainingColumn(),
-               )
+                TextColumn("[bold blue]{task.description}", justify="right"),
+                "[progress.percentage]{task.percentage:>.3f}%",
+                BarColumn(bar_width=None),
+                "•",
+                TextColumn("lr:{task.fields[lr]:>5.4e}"),
+                "•",
+                TextColumn("L:{task.fields[loss]:>6.5e}"),
+                "•",
+                TextColumn("avgL:{task.fields[avg_loss]:>6.5e}"),
+                "•",
+                TextColumn("Grad:{task.fields[avg_grad]:>5.4e}"),
+                "•",
+                TextColumn("bTime:{task.fields[batch_time]:>.3f}s"),
+                "•",
+                TimeRemainingColumn(),
+            )
         elif partten == 'finetune':
             progress = Progress(
                 TextColumn("[bold blue]{task.description}", justify="right"),
@@ -500,18 +476,18 @@ class gqTrain:
             )
         else:
             progress = Progress(
-               TextColumn("[yellow]{task.description}", justify="right"),
-               "[progress.percentage]{task.percentage:>.3f}%",
-               BarColumn(bar_width=None),
-               "•",
-               TextColumn("Accuracy:{task.fields[accuracy]:>.2f}"),
-               "•",
-               TextColumn("positiveAccuracy:{task.fields[positive_accuracy]:>.2f}"),
-               "•",
-               TextColumn("negativeAccuracy:{task.fields[negative_accuracy]:>.2f}"),
-               "•",
-               TimeRemainingColumn(),
-               )
+                TextColumn("[yellow]{task.description}", justify="right"),
+                "[progress.percentage]{task.percentage:>.3f}%",
+                BarColumn(bar_width=None),
+                "•",
+                TextColumn("Accuracy:{task.fields[accuracy]:>.2f}"),
+                "•",
+                TextColumn("positiveAccuracy:{task.fields[positive_accuracy]:>.2f}"),
+                "•",
+                TextColumn("negativeAccuracy:{task.fields[negative_accuracy]:>.2f}"),
+                "•",
+                TimeRemainingColumn(),
+            )
 
         return progress
 
@@ -536,8 +512,3 @@ if __name__ == '__main__':
     else:
         gqTrain.launch_fine_tune(opt.n_epochs)
     #  gqTrain.test_train()
-
-
-
-
-
