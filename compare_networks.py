@@ -164,7 +164,7 @@ class ResNet(nn.Module):
 
 if __name__ == '__main__':
     from torchsummary import summary
-    cnn = ResNet(Bottleneck, [2, 2, 2, 2]).cuda()
+    cnn = ResNet([2, 2, 2]).cuda()
     # cnn.load_state_dict(torch.load(
     #     '/home/wangchuxuan/PycharmProjects/grasp/coGQcnnRgb.pth'
     #     # '/home/wangchuxuan/PycharmProjects/grasp/cogqcnn.pth'
