@@ -51,15 +51,15 @@ class ResNet(nn.Module):
         self.inplanes = 64
         self.inChannel = inChannel
         super(ResNet, self).__init__()
-        self.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3,
+        self.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=1, padding=3,
                                bias=False)
         self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64 // 2, layers[0])
         self.layer2 = self._make_layer(block, 128 // 2, layers[1], stride=2)
-        self.layer3 = self._make_layer(block, 256 // 2, layers[2], stride=2)
-        # self.layer4 = self._make_layer(block, 256 // 2, layers[3], stride=2)
+        self.layer3 = self._make_layer(block, 256 // 2, layers[2], stride=1)
+        self.layer4 = self._make_layer(block, 256 // 2, layers[3], stride=2)
 
         self.norm_img = nn.BatchNorm2d(256*2)
         self.norm_pose = nn.BatchNorm2d(256*2)
@@ -70,7 +70,7 @@ class ResNet(nn.Module):
             nn.Conv2d(128, 64, kernel_size=3, padding=0),
             nn.BatchNorm2d(64),
             nn.ReLU(),
-            nn.Conv2d(64, 32, kernel_size=2, padding=0),
+            nn.Conv2d(64, 32, kernel_size=8, padding=0),
         )
         # kaiming weight normal after default init
         for m in self.modules():
@@ -119,7 +119,7 @@ class ResNet(nn.Module):
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
-        # x = self.layer4(x)
+        x = self.layer4(x)
         pose = self.norm_pose(pose.squeeze().view(pose.shape[0], 1, 1, 1).expand_as(x))
         x -= pose
         x = self.out(x)

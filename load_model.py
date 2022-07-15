@@ -16,7 +16,7 @@ def build_model(config):
             fully_conv_for_grasp=config.MODEL.FULLY_CONV_FOR_GRASP
         )
     elif config.MODEL.ARCH == 'res':
-        model = ResNet([2, 2, 2])
+        model = ResNet([2, 2, 2, 2])
 
     else:
         raise NotImplementedError(f"Unkown model: {config.MODEL.ARCH}")

@@ -62,10 +62,10 @@ class GraspDataset(torch.utils.data.Dataset):
         metric = metric[choice_index]
         angle = grasp[:, 3]
         depth = grasp[:, 2]
-        # depth = ((depth - self.pose_mean) / self.pose_std).astype(np.float32)
+        depth = ((depth - self.img_mean) / self.img_std).astype(np.float32)
         depth = depth.astype(np.float32)
-        img = img.transpose((0, 3, 1, 2))
-        # img = ((img.transpose((0, 3, 1, 2)) - self.img_mean)/self.img_std).astype(np.float32)
+        # img = img.transpose((0, 3, 1, 2))
+        img = ((img.transpose((0, 3, 1, 2)) - self.img_mean)/self.img_std).astype(np.float32)
         # img -= np.expand_dims(depth, (1, 2, 3))
         metric = (metric > 0.7).astype(np.long)
         flag = np.ones_like(angle)
@@ -150,7 +150,8 @@ class GGSCNNGraspDatasetZip(torch.utils.data.Dataset):
         self.batch_size = batch_size
         self.mask_idx_zero_dim = torch.arange(batch_size).to(self.device)
         self.ANGLE_INTERVAL = np.pi / 16
-
+        self.img_mean = 0.4291
+        self.img_std = 0.0510
     def __len__(self):
         return len(self.files) * (256 // self.batch_size)
 
@@ -174,15 +175,15 @@ class GGSCNNGraspDatasetZip(torch.utils.data.Dataset):
         grid = F.affine_grid(affine_matrix, img.shape, align_corners=False)
         img = F.grid_sample(img, grid, align_corners=False, padding_mode='border')
 
-        img_mean = torch.mean(img.flatten(2), dim=2, keepdim=True).unsqueeze(-1)
-        img_std = torch.std(img.flatten(2), dim=2, keepdim=True).unsqueeze(-1)
+        # img_mean = torch.mean(img.flatten(2), dim=2, keepdim=True).unsqueeze(-1)
+        # img_std = torch.std(img.flatten(2), dim=2, keepdim=True).unsqueeze(-1)
 
         mask_idx_second_dim = torch.div(angle,  self.ANGLE_INTERVAL, rounding_mode='floor').to(torch.long)
         mask[self.mask_idx_zero_dim, 2 * mask_idx_second_dim] = 1
         mask[self.mask_idx_zero_dim, 2 * mask_idx_second_dim + 1] = 1
 
-        return (img - img_mean)/img_std, (grasp - img_mean.squeeze()) / img_std.squeeze(), metric, mask
-
+        return (img - self.img_mean)/self.img_std, (grasp - self.img_mean) / self.img_std, metric, mask
+        # return img.mean(), img.std(), grasp.mean(), grasp.std()
 
 class MixupGraspDataset(torch.utils.data.Dataset):
     def __init__(self, dataset_dir, pattern='train', batch_size=64):
@@ -217,8 +218,8 @@ class GraspLossFunction(torch.nn.Module):
 
 
 if __name__ == '__main__':
-    # dataset = GGSCNNGraspDataset('/home/server/convTransformer/data')
-    dataset = MixupGraspDataset('/home/server/convTransformer/data', batch_size=64, pattern='train')
+    dataset = GGSCNNGraspDatasetZip('/home/server/convTransformer/data/grasp')
+    # dataset = MixupGraspDataset('/home/server/convTransformer/data', batch_size=64, pattern='train')
     print(len(dataset))
     import torch.utils.data as D
     import time
@@ -227,26 +228,25 @@ if __name__ == '__main__':
     num = 0
     t0 = time.time()
     total = 0
-    from matplotlib import pyplot as plt
-    for img, pose, metric, mask in train_data:
-        num += torch.sum(metric)
-        total += 256
-        print(img.shape)
-        idx = 2
-        print(pose[0, idx], metric[0, idx])
-        plt.imshow(img[0, idx, 0, ...])
-        plt.show()
-        # if num % 20 == 0:
-        #     print('{:2f}'.format(num/train_data.__len__()))
-        #     print((time.time() - t0) / num)
-        #print(mask.shape)
-        #print(metric.shape)
-    print(num, total)
-    # num = 0
-    # l = len(dataset.img_files)
-    # for i in range(15912, 17000):
-    #     print(dataset.img_files[i])
-    #     a = np.load(dataset.img_files[i])['arr_0']
-    #     print(i)
+    batch_idx = 0
+    img_mean = 0
+    img_std = 0
+    pos_mean = 0
+    pos_std = 0
+    for i_m, i_s, p_m, p_s in train_data:
+        # print(i_m.shape)
+        img_mean = (img_mean * batch_idx + i_m.mean()) / (batch_idx + 1)
+        img_std = (img_std * batch_idx + i_s.mean()) / (batch_idx + 1)
+        pos_mean = (pos_mean * batch_idx + p_m.mean()) / (batch_idx + 1)
+        pos_std = (pos_std * batch_idx + p_s.mean()) / (batch_idx + 1)
+        print(img_mean, img_std, pos_mean, pos_std)
+        batch_idx += 1
+
+        
+
+    # for img, pose, metric, mask, mean, std in train_data:
+    #     num += torch.sum(metric)
+    #     total += 256
+    # print(num, total)
 
 
