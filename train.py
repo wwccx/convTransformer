@@ -134,8 +134,6 @@ class gqTrain:
 
         # for img, target in self.trainDataLoader:
         for img, pose, target, mask in self.trainDataLoader:
-            if batchIdx > 20:
-                break
             target = target.to(self.device).flatten(0, 1)
             img = img.to(self.device).flatten(0, 1)
             mask = mask.to(self.device).flatten(0, 1)
@@ -266,7 +264,7 @@ class gqTrain:
             torch.save(save_state, save_path)
             return
         save_path = os.path.join(self.saveDir,
-                                 opt.model + opt.dataset + dt + 'state_epoch{}_acc{:.4f}.pth'.format(epoch, accuracy))
+                                 opt.model + opt.dataset + 'state_epoch{}_acc{:.4f}.pth'.format(epoch, accuracy))
         torch.save(save_state, save_path)
         logging.info('save to ' + save_path)
 
@@ -504,7 +502,7 @@ class gqTrain:
         total_norm = 0
         for p in parameters:
             param_norm = p.grad.data.norm(norm_type)
-            total_norm += param_norm.item() ** norm_type
+            total_norm += param_norm.item() ** norm_type if not torch.isnan(param_norm) else 0
         total_norm = total_norm ** (1. / norm_type)
         return total_norm
 
