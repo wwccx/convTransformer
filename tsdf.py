@@ -43,8 +43,8 @@ class Image(object):
 
     def device(self):
         if not isinstance(self.depth_raw, torch.Tensor):
-            return 'cpu'
-        return self.depth_raw.device.type
+            return torch.device('cpu')
+        return self.depth_raw.device
 
     def to(self, d):
         if not isinstance(d, torch.device):
@@ -78,7 +78,7 @@ class Image(object):
     @staticmethod
     def in_paint(depth_img, val=0.1):
         depth_img = np.array(depth_img).astype(np.float32)
-        depth_img = cv2.GaussianBlur(depth_img, (3, 3), 0.2)
+        # depth_img = cv2.GaussianBlur(depth_img, (3, 3), 0.2)
         # depth_img = cv2.Laplacian(depth_img, cv2.CV_32F, ksize=3)
         depth_img = cv2.copyMakeBorder(depth_img, 10, 10, 10, 10, cv2.BORDER_DEFAULT)
         mask = (depth_img <= val).astype(np.uint8)
@@ -94,7 +94,7 @@ class Image(object):
         if isinstance(self.depth_raw, np.ndarray):
             return self.depth_raw
         elif isinstance(self.depth_raw, torch.Tensor):
-            return self.depth_raw.cpu().squeeze()
+            return self.depth_raw.cpu().squeeze().numpy().astype(np.float32)
         else:
             raise TypeError('Check the image data type')
 
@@ -107,11 +107,12 @@ class Image(object):
             raise TypeError('Check the image data type')
 
 
-
 class Grasp(object):
     def __init__(self,
                  image: Image,
                  net=None,
+                 *args,
+                 **kwargs
                  ):
 
         self.image = image
@@ -121,32 +122,76 @@ class Grasp(object):
             'pixel_idx': (0, 0),
             'depth': 0,
             'angle': 0,
-            'grasp_pose': np.eyes(4),
+            'grasp_pose': np.eye(4),
             'trans_vec': np.zeros(3),
-            'rotation_mat': np.eye3(3)
+            'rotation_mat': np.eye(3)
         }
         if net is not None:
-            self.plan_grasp(net)
+            self.plan_grasp(net, *args, **kwargs)
 
-    def plan_grasp(self, net, depth_resolution=1e-2, depth_bin=10, network_depth_bias=0.05):
+    def plan_grasp(self,
+                   net,
+                   depth_resolution=5e-3,
+                   depth_bin=8,
+                   network_depth_bias=0.,
+                   normalize_depth=True,
+                   ):
         """
         :return:
         """
         sf = torch.nn.Softmax(dim=2)
-        self.image.to(self.image.device)
-        d = self.image.depth_raw.unsqueeze(0).unsqueeze(0)
+        self.image.to(torch.device('cuda:0'))
+        d = self.image.depth_raw
         depth = torch.arange(depth_bin).cuda() * depth_resolution + torch.min(d)
-        res = net(d, depth - network_depth_bias)
+
+        if normalize_depth:
+            d0 = (d - d.mean()) / d.std()
+            depth0 = (depth - d.mean()) / d.std()
+            res = net(d0, depth0 - network_depth_bias)
+        else:
+            res = net(d, depth - network_depth_bias)
         s = list(res.shape)
-        s[1] = [16, 2]
+        s[1:2] = [16, 2]
         res = res.reshape(s)
         res = sf(res)[:, :, 1, ...]  # B, 16, H, W
-        s[2] = []
-        index = self.get_tensor_idx(s, torch.argmax(res).detach().cpu().item())  # depth, angle, y, x
+        s[2:3] = []
+        index = self.get_tensor_idx(res.shape, torch.argmax(res).detach().cpu().item())  # depth, angle, y, x
+        print('index:', index)
         self._grasp['pixel_idx'] = index[-2], index[-1]
         self._grasp['depth'] = depth[index[0]].item()
         self._grasp['angle'] = index[1] * np.pi / 16
+        self._grasp['quality'] = res[index[0], index[1], index[2], index[3]].item()
 
+    def visualization(self, grasp_radius=40, grasp_color=(255, 0, 0), grasp_thickness=2,
+                      pixel_wise_stride=8, pixel_bias=48):
+        # self.image.to(torch.device('cuda:0'))
+        color_img = self.image.color()
+        depth_img = self.image.depth()
+        # depth = (depth_img - np.min(depth_img)) / (np.max(depth_img) - np.min(depth_img))
+
+        h_idx, w_idx = self._grasp['pixel_idx']
+        angle = self._grasp['angle']
+        pose = self._grasp['depth']
+        x = pixel_bias + pixel_wise_stride * w_idx
+        y = pixel_bias + pixel_wise_stride * h_idx
+        x1 = x + grasp_radius * np.cos(angle)
+        y1 = y + grasp_radius * np.sin(angle)
+        x2 = x + grasp_radius * np.cos(angle + np.pi)
+        y2 = y + grasp_radius * np.sin(angle + np.pi)
+        # print('index:', b_idx, c_idx, h_idx, w_idx)
+        # print('Quality:', res[b_idx, c_idx, h_idx, w_idx])
+        color_img = cv2.circle(color_img, (x, y), int(grasp_thickness*1.5), grasp_color, -1)
+        color_img = cv2.arrowedLine(color_img, (int(x1), int(y1)), (int(x2), int(y2)), grasp_color, thickness=grasp_thickness)
+        color_img = cv2.arrowedLine(color_img, (int(x2), int(y2)), (int(x1), int(y1)), grasp_color, thickness=grasp_thickness)
+
+        depth_img = cv2.circle(depth_img, (x, y), int(grasp_thickness*1.5), pose, -1)
+        depth_img = cv2.arrowedLine(depth_img, (int(x1), int(y1)), (int(x2), int(y2)), pose, thickness=grasp_thickness)
+        depth_img = cv2.arrowedLine(depth_img, (int(x2), int(y2)), (int(x1), int(y1)), pose, thickness=grasp_thickness)
+
+        return color_img, depth_img
+
+    def result(self):
+        return self._grasp
 
     @staticmethod
     def get_tensor_idx(shape, arg_max):
@@ -155,9 +200,6 @@ class Grasp(object):
             idx.append(arg_max % i)
             arg_max = arg_max // i
         return idx[::-1]
-
-
-
 
 
 class TSDF(object):
@@ -252,36 +294,6 @@ class TSDF(object):
 
         except Exception:
             raise TypeError("camera_extrinsic should be ndarray or tensor")
-        # baseCoor = torch.cat([self.baseCoor, torch.ones_like(self.volumeTSDF).unsqueeze(-1)], dim=-1)
-        # cameraCoor = torch.matmul(
-        #     torch.inverse(camera_extrinsic).to(torch.float32), baseCoor.unsqueeze(-1)
-        # )  # (L H W 4 1)
-        # cameraCoorZ = cameraCoor[:, :, :, 2:3, :]  # (L H W 1 1)
-        # cameraPixelIndexCoor = torch.floor(torch.matmul(camera_intrinsic,
-        #                                                 cameraCoor[..., :3, :] / cameraCoorZ)).squeeze()
-        # # get the corresponding pixel index of each voxel  (3 3) @ (L H W 3 1) = (L H W 3 1) = (L H W 3)
-        # validVoxelIndexCoor = torch.where(
-        #     torch.logical_and(
-        #         torch.logical_and(0 <= cameraPixelIndexCoor[..., 0],
-        #                           cameraPixelIndexCoor[..., 0] < 2 * camera_intrinsic[0, 2]),
-        #         torch.logical_and(0 <= cameraPixelIndexCoor[..., 1],
-        #                           cameraPixelIndexCoor[..., 1] < 2 * camera_intrinsic[1, 2])
-        #     )
-        # )  # tuple of index, (x, y, z)
-        #
-        # rendering_image = torch.ones((int(2 * camera_intrinsic[0, 2]), int(2 * camera_intrinsic[1, 2])))
-        #
-        # for i in range(len(validVoxelIndexCoor[0])):
-        #     x = validVoxelIndexCoor[0][i].to(torch.long)
-        #     y = validVoxelIndexCoor[1][i].to(torch.long)
-        #     z = validVoxelIndexCoor[2][i].to(torch.long)
-        #     u, v = cameraPixelIndexCoor[x, y, z, :2].to(torch.long)
-        #     z_depth = cameraCoorZ[x, y, z]
-        #     if self.volumeTSDF[x, y, z] < 0 and z_depth < rendering_image[u, v]:
-        #         rendering_image[u, v] = z_depth
-        #     print('rendering:', i/len(validVoxelIndexCoor[0]))
-        #
-        # return rendering_image
         if not shape:
             shape = (int(2 * camera_intrinsic[1, 2]), int(2 * camera_intrinsic[0, 2]))  # (H, W)
         H, W = shape

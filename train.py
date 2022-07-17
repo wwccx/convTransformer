@@ -76,7 +76,7 @@ class gqTrain:
         if not config.DATA.MIXUP_ON:
             if config.DATA.DATASET == 'grasp':
                 from graspDataset import GraspLossFunction
-                self.lossFun = GraspLossFunction()
+                self.lossFun = GraspLossFunction(config)
             else:
                 self.lossFun = torch.nn.CrossEntropyLoss()
         else:

@@ -80,8 +80,8 @@ def build_dataset(config, data_path='./data', transform=None):
         from graspDataset import MixupGraspDataset as GraspDataset
         # tdataset = GraspDataset('/home/server/grasp1/virtual_grasp/fine_tune')
         # vdataset = GraspDataset('/home/server/grasp1/virtual_grasp/fine_tune', pattern='validation')
-        tdataset = GraspDataset(data_path, batch_size=64)
-        vdataset = GraspDataset(data_path, pattern='val', batch_size=8)
+        tdataset = GraspDataset(data_path, batch_size=64, add_noise=config.DATA.NOISE)
+        vdataset = GraspDataset(data_path, pattern='val', batch_size=8, add_noise=config.DATA.NOISE)
         # print(batch_size)
         t = D.DataLoader(tdataset, batch_size=batch_size // 64, shuffle=True, num_workers=12)
         v = D.DataLoader(vdataset, batch_size=batch_size // 8, shuffle=True, num_workers=12)
