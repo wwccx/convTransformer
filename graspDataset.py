@@ -70,7 +70,7 @@ class GraspDataset(torch.utils.data.Dataset):
         # img = img.transpose((0, 3, 1, 2))
         img = ((img.transpose((0, 3, 1, 2)) - self.img_mean)/self.img_std).astype(np.float32)
         # img -= np.expand_dims(depth, (1, 2, 3))
-        metric = (metric > 0.7).astype(np.long)
+        metric = (metric > 0.5).astype(np.long)
         flag = np.ones_like(angle)
         flag[np.where(angle < 0)] *= -1
         angle = np.abs(angle) % np.pi * flag
@@ -78,6 +78,10 @@ class GraspDataset(torch.utils.data.Dataset):
         angle[np.where(angle < -np.pi/2)] += np.pi
         angle *= -1
         angle += np.pi/2
+        small_ang = np.where(angle < np.pi / 2)
+        big_ang = np.where(angle > np.pi / 2)
+        angle[small_ang] = np.pi / 2 - angle[small_ang]
+        angle[big_ang] = np.pi * 3 / 2 - angle[small_ang]
         mask = np.zeros((self.batch_size, angular_bins * 2))
         # angle = (angle // (np.pi/angular_bins)).astype(np.int)
         # metric_angle = np.zeros_like(metric)
@@ -86,7 +90,7 @@ class GraspDataset(torch.utils.data.Dataset):
         mask[np.arange(self.batch_size), np.int32(angle // (np.pi / angular_bins)) * 2] = 1
         mask[np.arange(self.batch_size), np.int32(angle // (np.pi / angular_bins)) * 2 + 1] = 1
 
-        return torch.from_numpy(img), torch.from_numpy(depth), torch.from_numpy(metric), torch.from_numpy(mask)
+        return torch.from_numpy(img), torch.from_numpy(depth), torch.from_numpy(metric), torch.from_numpy(mask), angle
 
     def __len__(self):
         return int(len(self.grasps_files) * self.index_split * 100 / self.batch_size) if self.dataset_partten == 'train' \
@@ -228,6 +232,39 @@ class GraspLossFunction(torch.nn.Module):
 
 
 if __name__ == '__main__':
+    dataset = GraspDataset('/home/server/convTransformer/data/fc_para/data/training/mini-dexnet_fc_pj_10_02_18/grasps',
+            batch_size=64, add_noise=False)
+    import cv2
+    import torch.utils.data as D
+    from matplotlib import pyplot as plt
+    t = D.DataLoader(dataset, batch_size=1, shuffle=True)
+    for img, pose, metric, mask, angle in t:
+        img = img.flatten(0, 1)
+        angle = angle.flatten(0, 1).squeeze()
+        pose = pose.flatten(0, 1).squeeze()
+        metric = metric.flatten(0, 1).squeeze()
+        x, y, grasp_radius = 48, 48, 48
+        for idx in range(64):
+            image = img[idx, 0, ...].numpy()
+            theta = angle[idx].item()
+            p = pose[idx].item()
+            label  = metric[idx].item()
+            if np.pi > theta > np.pi / 2:
+                theta = np.pi * 3 / 2 - theta
+            elif 0 < theta < np.pi / 2:
+                theta = np.pi / 2 - theta
+            x1 = x + grasp_radius * np.cos(theta)
+            y1 = y + grasp_radius * np.sin(theta)
+            x2 = x + grasp_radius * np.cos(theta + np.pi)
+            y2 = y + grasp_radius * np.sin(theta + np.pi)
+            depth_img = cv2.arrowedLine(image, (int(x1), int(y1)), (int(x2), int(y2)), p, thickness=2)
+            depth_img = cv2.arrowedLine(depth_img, (int(x2), int(y2)), (int(x1), int(y1)), p, thickness=2)
+            plt.imshow(depth_img)
+            plt.title('depth: {:.3f}, metric: {:1d}'.format(p, label))
+            plt.show()
+
+
+    '''
     dataset = GGSCNNGraspDatasetZip('/home/server/convTransformer/data/grasp')
     # dataset = MixupGraspDataset('/home/server/convTransformer/data', batch_size=64, pattern='train')
     print(len(dataset))
@@ -252,11 +289,11 @@ if __name__ == '__main__':
         print(img_mean, img_std, pos_mean, pos_std)
         batch_idx += 1
 
-        
+ 
 
     # for img, pose, metric, mask, mean, std in train_data:
     #     num += torch.sum(metric)
     #     total += 256
     # print(num, total)
-
+    '''
 
