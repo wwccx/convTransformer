@@ -40,6 +40,7 @@ class GraspDataset(torch.utils.data.Dataset):
         self.index_split = index_split
         self.batch_size = batch_size
         self.len_files = len(self.grasps_files)
+        self.mask_idx_zero_dim = torch.arange(batch_size)
         self.img_std = np.load(os.path.join(dataset_dir, 'im_std.npy'))
         self.img_mean = np.load(os.path.join(dataset_dir, 'im_mean.npy'))
         self.pose_std = np.load(os.path.join(dataset_dir, 'pose_std.npy'))
@@ -63,8 +64,7 @@ class GraspDataset(torch.utils.data.Dataset):
         metric = metric[choice_index]
         angle = grasp[:, 3]
         depth = grasp[:, 2]
-        if self.add_noise:
-            img += np.random.normal(0, 0.03, img.shape) * np.random.rand(1)
+
         depth = ((depth - self.img_mean) / self.img_std).astype(np.float32)
         depth = depth.astype(np.float32)
         # img = img.transpose((0, 3, 1, 2))
@@ -74,21 +74,38 @@ class GraspDataset(torch.utils.data.Dataset):
         flag = np.ones_like(angle)
         flag[np.where(angle < 0)] *= -1
         angle = np.abs(angle) % np.pi * flag
-        angle[np.where(angle > np.pi/2)] -= np.pi
-        angle[np.where(angle < -np.pi/2)] += np.pi
-        angle *= -1
-        angle += np.pi/2
-        small_ang = np.where(angle < np.pi / 2)
-        big_ang = np.where(angle > np.pi / 2)
-        angle[small_ang] = np.pi / 2 - angle[small_ang]
-        angle[big_ang] = np.pi * 3 / 2 - angle[small_ang]
-        mask = np.zeros((self.batch_size, angular_bins * 2))
+        # angle[np.where(angle > np.pi/2)] -= np.pi
+        # angle[np.where(angle < -np.pi/2)] += np.pi
+        angle[np.where(angle < 0)] += np.pi
+        angle = torch.rand(self.batch_size) * np.pi - torch.from_numpy(angle)
+        mask = torch.zeros(self.batch_size, 32)
+
+        affine_matrix = torch.zeros((self.batch_size, 2, 3))
+        affine_matrix[:, 0, 0] = torch.cos(angle)
+        affine_matrix[:, 0, 1] = torch.sin(angle)
+        affine_matrix[:, 1, 0] = -torch.sin(angle)
+        affine_matrix[:, 1, 1] = torch.cos(angle)
+        grid = F.affine_grid(affine_matrix, img.shape, align_corners=False)
+        img = F.grid_sample(torch.from_numpy(img), grid, align_corners=False, padding_mode='border')
+        if self.add_noise:
+            img += torch.randn(img.shape) * 0.03 * torch.rand(1)
+        mask_idx_second_dim = torch.div(angle, (np.pi / angular_bins), rounding_mode='floor').to(torch.long)
+        mask[self.mask_idx_zero_dim, 2 * mask_idx_second_dim] = 1
+        mask[self.mask_idx_zero_dim, 2 * mask_idx_second_dim + 1] = 1
+
+        # angle *= -1
+        # angle += np.pi/2
+        # small_ang = np.where(angle < np.pi / 2)
+        # big_ang = np.where(angle > np.pi / 2)
+        # angle[small_ang] = np.pi / 2 - angle[small_ang]
+        # angle[big_ang] = np.pi * 3 / 2 - angle[small_ang]
+        # mask = np.zeros((self.batch_size, angular_bins * 2))
         # angle = (angle // (np.pi/angular_bins)).astype(np.int)
         # metric_angle = np.zeros_like(metric)
         # metric_angle[np.where((6 <= angle) * (angle <= 9))] = 1
         # metric = metric * metric_angle.astype(np.int)
-        mask[np.arange(self.batch_size), np.int32(angle // (np.pi / angular_bins)) * 2] = 1
-        mask[np.arange(self.batch_size), np.int32(angle // (np.pi / angular_bins)) * 2 + 1] = 1
+        # mask[np.arange(self.batch_size), np.int32(angle // (np.pi / angular_bins)) * 2] = 1
+        # mask[np.arange(self.batch_size), np.int32(angle // (np.pi / angular_bins)) * 2 + 1] = 1
 
         return torch.from_numpy(img), torch.from_numpy(depth), torch.from_numpy(metric), torch.from_numpy(mask), angle
 
@@ -173,7 +190,6 @@ class GGSCNNGraspDatasetZip(torch.utils.data.Dataset):
         metric = torch.from_numpy(tensor['metric']).squeeze().to(torch.long)[choice, ...]
         angle = torch.rand(self.batch_size).to(self.device) * np.pi
         mask = torch.zeros(self.batch_size, 32).to(self.device)
-
 
         affine_matrix = torch.zeros((self.batch_size, 2, 3)).to(self.device)
         affine_matrix[:, 0, 0] = torch.cos(angle)

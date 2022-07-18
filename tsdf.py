@@ -162,7 +162,7 @@ class Grasp(object):
         self._grasp['angle'] = index[1] * np.pi / 16
         self._grasp['quality'] = res[index[0], index[1], index[2], index[3]].item()
 
-    def visualization(self, grasp_radius=40, grasp_color=(255, 0, 0), grasp_thickness=2,
+    def visualization(self, grasp_radius=48, grasp_color=(255, 0, 0), grasp_thickness=2,
                       pixel_wise_stride=8, pixel_bias=48):
         # self.image.to(torch.device('cuda:0'))
         color_img = self.image.color()
