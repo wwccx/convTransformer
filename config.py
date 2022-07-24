@@ -1,6 +1,7 @@
 import os
 import yaml
 from yacs.config import CfgNode as CN
+from torch import nn
 
 _C = CN()
 
@@ -34,6 +35,7 @@ _C.MODEL.WINDOW_SIZE = (3, 3)
 _C.MODEL.NUM_HEADS = (8, )
 _C.MODEL.DEPTHS = (8, )
 _C.MODEL.DROP_PATH_RATE = 0.1
+_C.MODEL.NORM_LAYER = nn.BatchNorm2d
 
 _C.TRAIN = CN()
 _C.TRAIN.EPOCHS = 100

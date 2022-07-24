@@ -5,7 +5,7 @@ from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 from torch.utils.cpp_extension import load
 from torch.autograd import Function
 from apex import amp
-
+from torchvision.transforms.functional import resize
 convAttn = load(name="convAttn",
                 extra_include_paths=["include"],
                 sources=["./cpp/convAttn.cpp", "./kernel/convAttn.cu"],
@@ -217,10 +217,10 @@ class convAttention(nn.Module):
 
 class ConvTransBlock(nn.Module):
     def __init__(self, dim, num_heads, win_size=(7, 7), attn_drop=0., conv_drop=0., drop_path=0.,
-                 conv_dim_ratio=4, act_layer=nn.GELU, default_shape=(32, 24, 24)):
+                 conv_dim_ratio=4, act_layer=nn.GELU, default_shape=(32, 24, 24), norm_layer=nn.LayerNorm):
         super().__init__()
-        self.norm1 = nn.LayerNorm(dim)
-        self.norm2 = nn.LayerNorm(dim)
+        self.norm1 = norm_layer(dim)
+        self.norm2 = norm_layer(dim)
         self.dim = dim
         self.convAttention = convAttention(dim=dim, num_heads=num_heads, win_size=win_size,
                                            attn_drop=attn_drop, default_shape=default_shape)
@@ -231,15 +231,21 @@ class ConvTransBlock(nn.Module):
         B, C, H, W = x.shape
         short_cut = x
         # print(self.dim, x.shape)
-        x = self.norm1(x.transpose(1, 3)).transpose(1, 3)
+        if isinstance(self.norm1, nn.LayerNorm):
+            x = self.norm1(x.transpose(1, 3)).transpose(1, 3)
+        elif isinstance(self.norm1, nn.BatchNorm2d):
+            x = self.norm1(x)
 
         x = self.convAttention(x)
 
         x = short_cut + self.drop_path(x)
 
-        x = x + self.drop_path(self.convLayers(
-            self.norm2(x.transpose(1, 3)).transpose(1, 3)
-        ))
+        if isinstance(self.norm1, nn.LayerNorm):
+            x = x + self.drop_path(self.convLayers(
+                self.norm2(x.transpose(1, 3)).transpose(1, 3)
+            ))
+        elif isinstance(self.norm1, nn.BatchNorm2d):
+            x = x + self.drop_path(self.convLayers(self.norm2(x)))
 
         return x
 
@@ -264,7 +270,8 @@ class patchEmbedding(nn.Module):
 
 class BasicLayer(nn.Module):
     def __init__(self, depth, dim, num_heads, win_size, conv_dim_ratio=4,
-                 attn_drop=0., conv_drop=0., drop_path=[0.], downsample=None, default_shape=(32, 24, 24)):
+                 attn_drop=0., conv_drop=0., drop_path=[0.], downsample=None, default_shape=(32, 24, 24),
+                 norm_layer=nn.LayerNorm):
         super().__init__()
         self.blocks = nn.ModuleList([
             ConvTransBlock(dim,
@@ -274,7 +281,8 @@ class BasicLayer(nn.Module):
                            attn_drop=attn_drop,
                            conv_drop=conv_drop,
                            drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
-                           default_shape=default_shape
+                           default_shape=default_shape,
+                           norm_layer=norm_layer
                            ) for i in range(depth)
         ])
         # if downsample is not None:
@@ -326,8 +334,9 @@ class convTransformer(nn.Module):
                                drop_path=dpr[sum(depths[:i]):sum(depths[:i + 1])],
                                default_shape=(B, int(patch_resolution[0]*2**(-i)), int(patch_resolution[1]*2**(-i))),
                                downsample=PatchMerging(embed_dim * 2 ** i, patch_merging_size=patch_merging_size)
-                               if i + 1 < len(depths) else None
-                               )
+                               if i + 1 < len(depths) else None,
+                               norm_layer=norm_layer)
+
             self.layers.append(layer)
         if fully_conv_for_grasp:
             self.avgpool = torch.nn.Identity()
@@ -356,12 +365,12 @@ class convTransformer(nn.Module):
             self.avgpool = nn.AdaptiveAvgPool1d(1)
             self.head = nn.Linear(int(embed_dim * 2 ** (len(depths) - 1)), num_classes)
 
-    def forward(self, *x):
+    def forward(self, *x, **kwargs):
         if self.fully_conv_for_grasp:
             if len(x) == 1:
                 pose = torch.zeros(x[0].shape[0]).cuda()
                 x = [x[0], pose]
-            return self._grasp_forward(*x)
+            return self._grasp_forward(*x, **kwargs)
         x = x[0]
         x = self.patch_embed(x)
         for layer in self.layers:
@@ -374,7 +383,7 @@ class convTransformer(nn.Module):
 
         return x
     
-    def _grasp_forward(self, img, pose):
+    def _grasp_forward(self, img, pose, shape=None):
         img = self.patch_embed(img)
         for layer in self.layers:
             img = layer(img)
@@ -383,6 +392,8 @@ class convTransformer(nn.Module):
             img = img.repeat(pose.shape[0], 1, 1, 1)
         pose = self.norm_pose(pose.squeeze().view(pose.shape[0], 1, 1, 1).expand_as(img))
         img -= pose
+        if shape is not None:
+            img = resize(img, list(shape))
         img = self.head(img)
 
         return img
