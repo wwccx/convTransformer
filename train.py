@@ -41,6 +41,7 @@ parser.add_argument('--amp_level', type=str, default='O1', choices=['O0', 'O1', 
                     help='mixed precision opt level, if O0, no amp is used')
 parser.add_argument("--mixup", type=bool, default=False)
 parser.add_argument("--finetune", type=str, default='')
+parser.add_argument("--tag", type=str, default='')
 opt = parser.parse_args()
 config = update_config(opt)
 logging.info(config)
@@ -106,9 +107,10 @@ class gqTrain:
                 self.saveDir = check_point
             else:
                 self.saveDir = os.path.join(saveDir,
-                                            'finetune' + datetime.datetime.now().strftime(opt.model + '%y_%m_%d_%H_%M'))
+                                            'finetune' + datetime.datetime.now().strftime(opt.model + '%y_%m_%d_%H_%M' + '_' + opt.tag))
         if self.saveDir == '':
-            self.saveDir = os.path.join(saveDir, datetime.datetime.now().strftime(opt.model + '%y_%m_%d_%H_%M'))
+            self.saveDir = os.path.join(saveDir,
+                    datetime.datetime.now().strftime(opt.model + '%y_%m_%d_%H_%M' + '_' + opt.tag))
         os.makedirs(self.saveDir, exist_ok=True)
         torch.save({'config': config}, os.path.join(self.saveDir, 'config.pth'))
         self.num_step_per_epoch = len(self.trainDataLoader)

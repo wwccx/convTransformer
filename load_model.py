@@ -1,6 +1,6 @@
 from convTrans import convTransformer
 from compare_networks import ResNet
-
+from torch import nn
 def build_model(config):
     if config.MODEL.ARCH == 'convTrans':
         model = convTransformer(
@@ -13,7 +13,8 @@ def build_model(config):
             patch_merging_size=config.MODEL.PATCH_MERGE_SIZE,
             window_size=config.MODEL.WINDOW_SIZE,
             drop_path_rate=config.MODEL.DROP_PATH_RATE,
-            fully_conv_for_grasp=config.MODEL.FULLY_CONV_FOR_GRASP
+            fully_conv_for_grasp=config.MODEL.FULLY_CONV_FOR_GRASP,
+            norm_layer=nn.BatchNorm2d if config.MODEL.NORM_LAYER == 'BN' else nn.LayerNorm
         )
     elif config.MODEL.ARCH == 'res':
         model = ResNet([2, 2, 2, 2])

@@ -85,7 +85,7 @@ class convLayers(nn.Module):
         self.conv1 = nn.Conv2d(in_dim, hidden_dim, kernel_size=(1, 1), padding=(0, 0), stride=(1, 1))
         self.conv2 = nn.Conv2d(hidden_dim, out_dim, kernel_size=(1, 1), padding=(0, 0), stride=(1, 1))
         self.act = act_layer()
-        self.drop = nn.Dropout2d(drop)
+        self.drop = nn.Dropout2d(drop) if drop > 0. else nn.Identity()
 
     def forward(self, x):
         x = self.conv1(x)
