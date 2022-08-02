@@ -93,9 +93,6 @@ class gqTrain:
             else:
                 self.lossFun = SoftTargetCrossEntropy()
 
-
-
-
         self.gradNormVal = config.TRAIN.CLIP_GRAD
         self.mixup = Mixup(mixup_alpha=config.DATA.MIXUP.MIXUP_ALPHA,
                            cutmix_alpha=config.DATA.MIXUP.CUTMIX_ALPHA,
@@ -144,18 +141,19 @@ class gqTrain:
         p.update(tid, total=self.num_step_per_epoch)
 
         # for img, target in self.trainDataLoader:
-        for img, pose, target, mask in self.trainDataLoader:
+        for img, pose, target, mask, target_pos in self.trainDataLoader:
             target = target.to(self.device).flatten(0, 1)
             img = img.to(self.device).flatten(0, 1)
             mask = mask.to(self.device).flatten(0, 1)
             pose = pose.to(self.device).flatten(0, 1)
+            target_pos = target_pos.to(self.device).flatten(0, 1)
             if opt.mixup:
                 img, target = self.mixup(img, target)
             # _input = [img, pose]
             target_pre = self.network(*[img, pose])
             # print(target_pre.shape)
             # print(target.shape)
-            loss = self.lossFun(target_pre, target, mask)
+            loss = self.lossFun(target_pre, target, mask, target_pos)
             self.loss_value = np.append(self.loss_value, loss.item())
             self.lr = np.append(self.lr, self.optimizer.param_groups[0]['lr'])
 
@@ -218,11 +216,12 @@ class gqTrain:
         total_negative_pre = torch.tensor(0.1).cuda()
         ap = AP()
 
-        for img, pose, target, mask in self.valDataLoader:
+        for img, pose, target, mask, target_pos in self.valDataLoader:
             target = target.to(self.device).flatten(0, 1)
             img = img.to(self.device).flatten(0, 1)
             mask = mask.to(self.device).flatten(0, 1)
             pose = pose.to(self.device).flatten(0, 1)
+            target_pos = target_pos.to(self.device).flatten(0, 1)
             target_pre = self.network(*[img, pose])
             target_pre = target_pre.squeeze()[torch.where(mask > 0)].view(-1, 2)
             target_pre = torch.nn.functional.softmax(target_pre, dim=1)
@@ -298,72 +297,6 @@ class gqTrain:
                 for p in self.optimizer.param_groups:
                     logging.info('current lr:{}'.format(p['lr']))
                 np.save(os.path.join(self.saveDir, 'acc_value.npy'), self.acc_value)
-            self.currentEpoch += 1
-
-    def fine_tune(self, p, log_frequency=10):
-
-        avg_loss = 0
-        batch_time = 0
-        avg_grad = 0
-        avg_acc = 0
-        t0 = time.time()
-        tid = p.add_task(f'Epoch{self.currentEpoch}', loss=0, avg_loss=0,
-                         batch_time=0, lr=0, avg_grad=0, avg_acc=0)
-        p.update(tid, total=self.num_step_per_epoch)
-
-        for batchIdx in range(len(self.trainDataLoader)):
-            img, pose, target, mask = self.trainDataLoader[batchIdx]
-            self.network.train()
-            target = target.to(self.device).squeeze()
-            img = img.to(self.device)
-            mask = mask.to(self.device)
-            pose = pose.to(self.device)
-            target_pre = self.network(*[img, pose])
-            loss = self.lossFun(target_pre, target, mask)
-            self.loss_value = np.append(self.loss_value, loss.item())
-            self.lr = np.append(self.lr, self.optimizer.param_groups[0]['lr'])
-            self.finetune_acc = np.append(self.finetune_acc, torch.sum(target).item() / len(target))
-            self.optimizer.zero_grad()
-            if opt.amp_level != "O0":
-                with amp.scale_loss(loss, self.optimizer) as scaled_loss:
-                    scaled_loss.backward()
-            else:
-                loss.backward()
-            if self.gradNormVal:
-                grad_norm = torch.nn.utils.clip_grad_norm_(self.network.parameters(), self.gradNormVal)
-                self.grad = np.append(self.grad, grad_norm.item())
-                avg_grad = (batchIdx * avg_grad + grad_norm.item()) / (batchIdx + 1)
-            else:
-                grad_norm = self.get_grad_norm(self.network.parameters())
-                if not np.isinf(grad_norm):
-                    self.grad = np.append(self.grad, grad_norm)
-                    avg_grad = (batchIdx * avg_grad + grad_norm) / (batchIdx + 1)
-            self.optimizer.step()
-            avg_loss = (batchIdx * avg_loss + loss.item()) / (batchIdx + 1)
-            avg_acc = (batchIdx * avg_acc + self.finetune_acc[-1]) / (batchIdx + 1)
-            if (batchIdx + 1) % log_frequency == 0:
-                batch_time = (time.time() - t0) / log_frequency
-                t0 = time.time()
-                np.save(os.path.join(self.saveDir, 'loss_value.npy'),
-                        self.loss_value)
-                np.save(os.path.join(self.saveDir, 'lr_value.npy'),
-                        self.lr)
-                np.save(os.path.join(self.saveDir, 'grad_value.npy'),
-                        self.grad)
-                np.save(os.path.join(self.saveDir, 'acc_value.npy'),
-                        self.finetune_acc)
-
-            p.update(tid, advance=1, loss=loss.item(), avg_loss=avg_loss,
-                     batch_time=batch_time, lr=self.lr[-1], avg_grad=avg_grad, avg_acc=avg_acc)
-            self.lr_scheduler.step_update(self.currentEpoch * self.num_step_per_epoch + batchIdx)
-        return avg_acc
-
-    def launch_fine_tune(self, epoch):
-        for i in range(self.currentEpoch, epoch):
-            p = self.make_progress('finetune')
-            with p as x:
-                acc = self.fine_tune(p=x)
-            self.save(self.currentEpoch, acc)
             self.currentEpoch += 1
 
     def load_check_point(self, save_path):
@@ -520,8 +453,6 @@ class gqTrain:
 
 if __name__ == '__main__':
     gqTrain = gqTrain()
-    if opt.finetune == '':
-        gqTrain.run(epoch=opt.n_epochs)
-    else:
-        gqTrain.launch_fine_tune(opt.n_epochs)
+    gqTrain.run(epoch=opt.n_epochs)
+
     #  gqTrain.test_train()

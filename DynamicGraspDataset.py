@@ -175,7 +175,7 @@ class MixupGraspDataset(torch.utils.data.Dataset):
         angle = torch.rand(self.batch_size) * np.pi
         velocity[:, 0] = torch.cos(angle)
         velocity[:, 1] = torch.sin(angle)
-        velocity *= torch.rand(self.batch_size) * 2
+        velocity *= torch.rand(self.batch_size, 1) * 2
         affine_matrix, target_pos = self.trajectory(velocity)
         img = img.flatten(0, 1)
 
@@ -186,20 +186,24 @@ class MixupGraspDataset(torch.utils.data.Dataset):
         return img, depth, metric, mask, target_pos
 
 
-class GraspLossFunction(torch.nn.Module):
+class DynamicGraspLossFunction(torch.nn.Module):
     def __init__(self, config):
-        super(GraspLossFunction, self).__init__()
+        super(DynamicGraspLossFunction, self).__init__()
         # self.loss_function = torch.nn.CrossEntropyLoss(weight=torch.tensor([5., 1.]).cuda())
         if not config.DATA.MIXUP_ON:
-            self.loss_function = torch.nn.CrossEntropyLoss(weight=torch.tensor(config.DATA.LOSS_WEIGHT).cuda())
+            self.classify_loss_function = torch.nn.CrossEntropyLoss(weight=torch.tensor(config.DATA.LOSS_WEIGHT).cuda())
         else:
-            self.loss_function = SoftTargetCrossEntropy()
+            self.classify_loss_function = SoftTargetCrossEntropy()
+        self.regress_loss_function = torch.nn.MSELoss()
 
-    def forward(self, inputs, target, mask):
+    def forward(self, inputs, target, mask, target_pos=None):
         inputs = inputs.squeeze()
         valid_input = inputs[torch.where(mask > 0)].view(-1, 2)
         # target = target * (torch.sum(mask[:, 12:18], dim=1) > 0).to(torch.long)
-        return self.loss_function(valid_input, target)
+
+        return self.classify_loss_function(
+            valid_input, target) + self.regress_loss_function(
+            inputs[:, -2:], target_pos) * target.to(torch.float32)
 
 
 class TrajectoryGenerator:
@@ -239,7 +243,8 @@ if __name__ == '__main__':
     from matplotlib import pyplot as plt
     batch_size = 8
     time_slices = 4
-    dataset = MixupGraspDataset('/home/server/convTransformer/data/', batch_size=64, add_noise=False, time_slices=4)
+    dataset = MixupGraspDataset('/home/server/convTransformer/data/', batch_size=64,
+                                add_noise=False, time_slices=time_slices)
     t = D.DataLoader(dataset, batch_size=1, shuffle=False)
     for img, pose, metric, mask, tar_pos in t:
         img = img.flatten(0, 1)
@@ -250,6 +255,6 @@ if __name__ == '__main__':
         tar_pos = tar_pos.flatten(0, 1).squeeze()
         for j in range(batch_size):
             for i in range(time_slices):
-                plt.subplot(time_slices, 2, i + 1)
+                plt.subplot(time_slices, 1, i + 1)
                 plt.imshow(img[j, i, :, :].detach().numpy())
             plt.show()
