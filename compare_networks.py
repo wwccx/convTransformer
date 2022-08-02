@@ -1,6 +1,7 @@
 import torch.nn as nn
 import torch
 import math
+from torchvision.transforms.functional import resize
 
 
 class Bottleneck(nn.Module):
@@ -106,7 +107,7 @@ class ResNet(nn.Module):
 
         return nn.Sequential(*layers)
 
-    def forward(self, *x):
+    def forward(self, *x, shape=None):
         if len(x) == 1:
             pose = torch.zeros(x[0].shape[0]).cuda()
             x = [x[0], pose]
@@ -120,8 +121,12 @@ class ResNet(nn.Module):
         x = self.layer2(x)
         x = self.layer3(x)
         x = self.layer4(x)
+        if x.shape[0] == 1:
+            x = x.repeat(pose.shape[0], 1, 1, 1)
         pose = self.norm_pose(pose.squeeze().view(pose.shape[0], 1, 1, 1).expand_as(x))
         x -= pose
+        if shape is not None:
+            x = resize(x, list(shape))
         x = self.out(x)
 
         return x

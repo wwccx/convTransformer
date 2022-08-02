@@ -184,10 +184,10 @@ class Grasp(object):
         self._grasp['quality'] = res[index[0], index[1], index[2], index[3]].item()
         self._grasp['time'] = plan_time
 
-    def visualization(self, grasp_radius=48, grasp_color=(1, 0, 0), grasp_thickness=2,
+    def visualization(self, grasp_radius=48, grasp_color=(0.99, 0, 0), grasp_thickness=2,
                       pixel_wise_stride=8, pixel_bias=48):
         # self.image.to(torch.device('cuda:0'))
-        color_img = self.image.color()
+        color_img = self.image.color().clip(0, 1)
         depth_img = self.image.depth()
         # depth = (depth_img - np.min(depth_img)) / (np.max(depth_img) - np.min(depth_img))
 
@@ -448,7 +448,7 @@ def test(net=None):
         [0, 0, -1, 0.58],
         [0., 0., 0., 1., ]
     ])
-    Tcam2base = get_extrinsic(0, 0.35, 0.58, Tcam2base)
+    Tcam2base = get_extrinsic(0, 0.0, 0.58, Tcam2base)
     h, w = 400, 400
     img = v.rendering(Tcam2base, np.array([614.887, 0, w // 2, 0, 614.955, h // 2, 0, 0, 1]).reshape(3, 3), (h, w))
     img = img
@@ -457,7 +457,7 @@ def test(net=None):
     print(np.max(img1), np.min(img1))
     img_net = Image(img1[:, :, -1], Tcam2base, img1[:, :, :3])
     # img_net.to(torch.device('cuda'))
-    # img_net.resize([320, 320])
+    img_net.resize([320, 320])
     grasp = Grasp(img_net, net, depth_bin=10)
 
     result = grasp.result()
@@ -471,35 +471,43 @@ def test(net=None):
     plt.title('depth: {:.4f}, quality: {:.4f}'.format(depth, q))
     plt.show()
 
-    plt.figure(1)
-    plt.imshow(img1[:, :, -1])
-    plt.figure(2)
-    plt.imshow(img1[:, :, 0:3])
-    plt.show()
-    mesh = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(verts), o3d.utility.Vector3iVector(faces))
-    mesh.compute_vertex_normals()
-    mesh_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(
-        size=0.2, origin=[0, 0, 0])
-    mesh_frame1 = o3d.geometry.TriangleMesh.create_coordinate_frame(
-        size=0.2, origin=v.volume_origin.cpu().numpy())
-    o3d.visualization.draw_geometries([mesh, mesh_frame, mesh_frame1, pt])
+    # plt.figure(1)
+    # plt.imshow(img1[:, :, -1])
+    # plt.figure(2)
+    # plt.imshow(img1[:, :, 0:3])
+    # plt.show()
+    # mesh = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(verts), o3d.utility.Vector3iVector(faces))
+    # mesh.compute_vertex_normals()
+    # mesh_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(
+    #     size=0.2, origin=[0, 0, 0])
+    # mesh_frame1 = o3d.geometry.TriangleMesh.create_coordinate_frame(
+    #     size=0.2, origin=v.volume_origin.cpu().numpy())
+    # o3d.visualization.draw_geometries([mesh, mesh_frame, mesh_frame1, pt])
 
 
 if __name__ == '__main__':
     from convTrans import convTransformer
+    from compare_networks import ResNet
     import os
-
-    net = convTransformer(in_chans=1, num_classes=32, embed_dim=128, depths=(8,), num_heads=(8,),
-                          patch_embedding_size=(8, 8), fully_conv_for_grasp=True, window_size=(3, 3)).cuda()
-    save_path = './train/mixupFcParaRotation'
+    from load_model import build_model
+    # net = ResNet([2, 2, 2, 2]).cuda()
+    save_path = './train/mixupFcParaRotationRes'
+    # net = convTransformer(in_chans=1, num_classes=32, embed_dim=128, depths=(8,), num_heads=(8,),
+    #                       patch_embedding_size=(8, 8), fully_conv_for_grasp=True, window_size=(3, 3),
+    #                       norm_layer=torch.nn.BatchNorm2d).cuda()
+    save_path = './train/mixupFcParaRotationBN'
+    save_path = './train/mixupFcParaRotationCurentBest'
     check_points = os.listdir(save_path)
     check_points = [os.path.join(save_path, ckpt) for ckpt in check_points if ckpt.endswith('.pth')]
     check_points.sort(key=os.path.getmtime)
+    config = torch.load(check_points[0])['config']
+    print(config)
+    net = build_model(config).cuda()
+
     latest_ckpt = check_points[-1]
     s = torch.load(latest_ckpt)
     net.load_state_dict(s['model'])
     net.eval()
-    test(net)
-
-
+    while 1:
+        test(net)
 
