@@ -1,6 +1,8 @@
 from convTrans import convTransformer
 from compare_networks import ResNet
 from torch import nn
+
+
 def build_model(config):
     if config.MODEL.ARCH == 'convTrans':
         model = convTransformer(
@@ -14,10 +16,11 @@ def build_model(config):
             window_size=config.MODEL.WINDOW_SIZE,
             drop_path_rate=config.MODEL.DROP_PATH_RATE,
             fully_conv_for_grasp=config.MODEL.FULLY_CONV_FOR_GRASP,
-            norm_layer=nn.BatchNorm2d if config.MODEL.NORM_LAYER == 'BN' else nn.LayerNorm
+            norm_layer=nn.BatchNorm2d if config.MODEL.NORM_LAYER == 'BN' else nn.LayerNorm,
+            dynamic=config.MODEL.DYNAMIC,
         )
     elif config.MODEL.ARCH == 'res':
-        model = ResNet([2, 2, 2, 2])
+        model = ResNet([2, 2, 2, 2], inChannel=config.MODEL.IN_CHANNELS)
 
     else:
         raise NotImplementedError(f"Unkown model: {config.MODEL.ARCH}")

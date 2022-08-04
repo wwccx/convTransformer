@@ -90,7 +90,7 @@ class GraspDataset(torch.utils.data.Dataset):
         img = F.grid_sample(torch.from_numpy(img), grid, align_corners=False, padding_mode='border')
         if self.add_noise:
             img += torch.randn(img.shape) * 0.03 * torch.rand(1)
-        mask_idx_second_dim = torch.div(angle0, (np.pi / angular_bins), rounding_mode='floor').to(torch.long)
+        mask_idx_second_dim = torch.floor(angle0/(np.pi / angular_bins)).to(torch.long)
         mask[self.mask_idx_zero_dim, 2 * mask_idx_second_dim] = 1
         mask[self.mask_idx_zero_dim, 2 * mask_idx_second_dim + 1] = 1
 
@@ -172,7 +172,7 @@ class MixupGraspDataset(torch.utils.data.Dataset):
 
         img = img.repeat(1, self.time_slices, 1, 1).unsqueeze(2)
         velocity = torch.zeros(self.batch_size, 2)
-        angle = torch.rand(self.batch_size) * np.pi
+        angle = torch.rand(self.batch_size) * np.pi * 2
         velocity[:, 0] = torch.cos(angle)
         velocity[:, 1] = torch.sin(angle)
         velocity *= torch.rand(self.batch_size, 1) * 2
@@ -194,16 +194,13 @@ class DynamicGraspLossFunction(torch.nn.Module):
             self.classify_loss_function = torch.nn.CrossEntropyLoss(weight=torch.tensor(config.DATA.LOSS_WEIGHT).cuda())
         else:
             self.classify_loss_function = SoftTargetCrossEntropy()
-        self.regress_loss_function = torch.nn.MSELoss()
+        self.regress_loss_function = torch.nn.L1Loss()
 
-    def forward(self, inputs, target, mask, target_pos=None):
-        inputs = inputs.squeeze()
-        valid_input = inputs[torch.where(mask > 0)].view(-1, 2)
-        # target = target * (torch.sum(mask[:, 12:18], dim=1) > 0).to(torch.long)
-
-        return self.classify_loss_function(
-            valid_input, target) + self.regress_loss_function(
-            inputs[:, -2:], target_pos) * target.to(torch.float32)
+    def forward(self, classification, position, target, mask, target_pos):
+        classification = classification.squeeze()
+        position = position.squeeze()
+        valid_input = classification[torch.where(mask > 0)].view(-1, 2)
+        return self.classify_loss_function(valid_input, target) + 2 * self.regress_loss_function(position, target_pos)
 
 
 class TrajectoryGenerator:
@@ -243,7 +240,7 @@ if __name__ == '__main__':
     from matplotlib import pyplot as plt
     batch_size = 8
     time_slices = 4
-    dataset = MixupGraspDataset('/home/server/convTransformer/data/', batch_size=64,
+    dataset = MixupGraspDataset('./data/', batch_size=64,
                                 add_noise=False, time_slices=time_slices)
     t = D.DataLoader(dataset, batch_size=1, shuffle=False)
     for img, pose, metric, mask, tar_pos in t:

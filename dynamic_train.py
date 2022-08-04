@@ -150,10 +150,10 @@ class gqTrain:
             if opt.mixup:
                 img, target = self.mixup(img, target)
             # _input = [img, pose]
-            target_pre = self.network(*[img, pose])
+            target_class_pre, target_pos_pre = self.network(*[img, pose])
             # print(target_pre.shape)
             # print(target.shape)
-            loss = self.lossFun(target_pre, target, mask, target_pos)
+            loss = self.lossFun(target_class_pre, target_pos_pre, target, mask, target_pos)
             self.loss_value = np.append(self.loss_value, loss.item())
             self.lr = np.append(self.lr, self.optimizer.param_groups[0]['lr'])
 
@@ -175,15 +175,7 @@ class gqTrain:
             self.optimizer.step()
             avg_loss = (batchIdx * avg_loss + loss.item()) / (batchIdx + 1)
             if (batchIdx + 1) % log_frequency == 0:
-                # self.loss_value = np.append(self.loss_value, loss.item())
                 batch_time = (time.time() - t0) / log_frequency
-                # logging.info('\r Epoch:{}--{:.4f}%, loss:{:.6e}, batch time:{:.3f}s, epoch remain:{:.2f}min'
-                #              .format(self.currentEpoch, 100*batchIdx/self.num_step_per_epoch,
-                #                      loss.item(),
-                #                      (time.time()-t0)/log_frequency,
-                #                      (time.time()-t0)/log_frequency*(self.num_step_per_epoch - batchIdx)/60
-                #                      )
-                #              )
                 t0 = time.time()
                 np.save(os.path.join(self.saveDir, 'loss_value.npy'),
                         self.loss_value)
@@ -191,14 +183,10 @@ class gqTrain:
                         self.lr)
                 np.save(os.path.join(self.saveDir, 'grad_value.npy'),
                         self.grad)
-            # if (batchIdx + 1) % (20 * log_frequency) == 0:
-            #     self.save(self.currentEpoch, -1)
             batchIdx += 1
             p.update(tid, advance=1, loss=loss.item(), avg_loss=avg_loss,
                      batch_time=batch_time, lr=self.lr[-1], avg_grad=avg_grad)
             self.lr_scheduler.step_update(self.currentEpoch * self.num_step_per_epoch + batchIdx)
-            # self.progress.update(task_id, total=self.num_step_per_epoch,
-            #         completed=batchIdx)
 
     @torch.no_grad()
     def validate(self, p=None):
@@ -208,12 +196,14 @@ class gqTrain:
         success_pre = torch.tensor(0.1).cuda()
         total_pre = torch.tensor(0.1).cuda()
         tid = p.add_task(f'Validation:{self.currentEpoch}', accuracy=0,
-                         positive_accuracy=0, negative_accuracy=0)
+                         positive_accuracy=0, negative_accuracy=0, loss=0, rloss=0)
         p.update(tid, total=len(self.valDataLoader))
         positive_pre = torch.tensor(0.1).cuda()
         negative_pre = torch.tensor(0.1).cuda()
         total_positive_pre = torch.tensor(0.1).cuda()
         total_negative_pre = torch.tensor(0.1).cuda()
+        average_loss = 0
+        average_rloss = 0
         ap = AP()
 
         for img, pose, target, mask, target_pos in self.valDataLoader:
@@ -222,14 +212,19 @@ class gqTrain:
             mask = mask.to(self.device).flatten(0, 1)
             pose = pose.to(self.device).flatten(0, 1)
             target_pos = target_pos.to(self.device).flatten(0, 1)
-            target_pre = self.network(*[img, pose])
-            target_pre = target_pre.squeeze()[torch.where(mask > 0)].view(-1, 2)
-            target_pre = torch.nn.functional.softmax(target_pre, dim=1)
-            ap.update(target_pre[:, 1], target)
-            target_pre = torch.argmax(target_pre, dim=1)
+            target_class_pre, target_pos_pre = self.network(*[img, pose])
+            loss = self.lossFun(target_class_pre, target_pos_pre, target, mask, target_pos)
+            loss_pos = torch.nn.functional.mse_loss(target_pos_pre, target_pos)
+            average_loss = (valBatchIdx * average_loss + loss.item()) / (valBatchIdx + 1)
+            average_rloss = (valBatchIdx * average_rloss + loss_pos.item()) / (valBatchIdx + 1)
+
+            target_class_pre = target_class_pre.squeeze()[torch.where(mask > 0)].view(-1, 2)
+            target_class_pre = torch.nn.functional.softmax(target_class_pre, dim=1)
+            ap.update(target_class_pre[:, 1], target)
+            target_class_pre = torch.argmax(target_class_pre, dim=1)
             # print(target_pre.shape, target.shape)
             # print(target_pre, target)
-            judge_tensor = (target_pre == target)
+            judge_tensor = (target_class_pre == target)
             total_pre += len(target)
             success_pre += torch.sum(judge_tensor)
             # print(target_pre)
@@ -248,12 +243,12 @@ class gqTrain:
             #                  )
             valBatchIdx += 1
             p.update(tid, advance=1, accuracy=100 * success_pre / total_pre,
+                     loss=average_loss, rloss=average_rloss,
                      positive_accuracy=100 * positive_pre / total_positive_pre,
                      negative_accuracy=100 * negative_pre / total_negative_pre)
         # print(success_pre, total_pre, positive_pre, total_positive_pre,
         #         negative_pre, total_negative_pre)
         map = ap.compute()
-        print()
         return map
 
     def save(self, epoch, accuracy):
@@ -425,6 +420,10 @@ class gqTrain:
                 TextColumn("[yellow]{task.description}", justify="right"),
                 "[progress.percentage]{task.percentage:>.3f}%",
                 BarColumn(bar_width=None),
+                "•",
+                TextColumn("Loss:{task.fields[loss]:>.3f}"),
+                "•",
+                TextColumn("Accuracy:{task.fields[rloss]:>.4e}"),
                 "•",
                 TextColumn("Accuracy:{task.fields[accuracy]:>.2f}"),
                 "•",

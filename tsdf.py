@@ -166,11 +166,15 @@ class Grasp(object):
         if normalize_depth:
             d0 = (d - d.mean()) / d.std()
             depth0 = (depth - d.mean()) / d.std()
+            d0 = d0.repeat(1, 4, 1, 1)
             res = net(d0, depth0 - network_depth_bias, **kwargs)
         else:
             res = net(d, depth - network_depth_bias, **kwargs)
         torch.cuda.synchronize()
         plan_time = time.time() - start_time
+        res1 = res[:, :32, :, :]
+        pos = res[:, -2:, :, :]
+        res = res1
         s = list(res.shape)
         s[1:2] = [16, 2]
         res = res.reshape(s)
@@ -178,6 +182,7 @@ class Grasp(object):
         s[2:3] = []
         index = self.get_tensor_idx(res.shape, torch.argmax(res).detach().cpu().item())  # depth, angle, y, x
         print('index:', index, 'quality:', '{:.4f}'.format(res[index[0], index[1], index[2], index[3]].item()))
+        print(pos[index[0], :, index[2], index[3]].detach().cpu().numpy())
         self._grasp['pixel_idx'] = index[-2], index[-1]
         self._grasp['depth'] = depth[index[0]].item()
         self._grasp['angle'] = index[1] * np.pi / 16
@@ -185,6 +190,100 @@ class Grasp(object):
         self._grasp['time'] = plan_time
 
     def visualization(self, grasp_radius=48, grasp_color=(0.99, 0, 0), grasp_thickness=2,
+                      pixel_wise_stride=8, pixel_bias=48):
+        # self.image.to(torch.device('cuda:0'))
+        color_img = self.image.color().clip(0, 1)
+        depth_img = self.image.depth()
+        # depth = (depth_img - np.min(depth_img)) / (np.max(depth_img) - np.min(depth_img))
+
+        h_idx, w_idx = self._grasp['pixel_idx']
+        angle = self._grasp['angle']
+        pose = self._grasp['depth']
+        x = pixel_bias + pixel_wise_stride * w_idx
+        y = pixel_bias + pixel_wise_stride * h_idx
+        x1 = x + grasp_radius * np.cos(angle)
+        y1 = y + grasp_radius * np.sin(angle)
+        x2 = x + grasp_radius * np.cos(angle + np.pi)
+        y2 = y + grasp_radius * np.sin(angle + np.pi)
+        # print('index:', b_idx, c_idx, h_idx, w_idx)
+        # print('Quality:', res[b_idx, c_idx, h_idx, w_idx])
+        color_img = cv2.circle(color_img, (x, y), int(grasp_thickness*1.5), grasp_color, -1)
+        color_img = cv2.arrowedLine(color_img, (int(x1), int(y1)), (int(x2), int(y2)), grasp_color, thickness=grasp_thickness)
+        color_img = cv2.arrowedLine(color_img, (int(x2), int(y2)), (int(x1), int(y1)), grasp_color, thickness=grasp_thickness)
+
+        depth_img = cv2.circle(depth_img, (x, y), int(grasp_thickness*1.5), pose, -1)
+        depth_img = cv2.arrowedLine(depth_img, (int(x1), int(y1)), (int(x2), int(y2)), pose, thickness=grasp_thickness)
+        depth_img = cv2.arrowedLine(depth_img, (int(x2), int(y2)), (int(x1), int(y1)), pose, thickness=grasp_thickness)
+
+        return color_img, depth_img
+
+    def dynamic_plan(self,
+                   net,
+                   depth_resolution=5e-3,
+                   depth_bin=8,
+                   network_depth_bias=0.,
+                   normalize_depth=True,
+                   **kwargs):
+        """
+        :return:
+        """
+        from DynamicGraspDataset import TrajectoryGenerator
+        import torch.nn.functional as F
+        time_slices = 4
+        tg = TrajectoryGenerator(time_slices)
+        velocity = torch.zeros(1, 2)
+        # angle = torch.ones(1) * 0
+
+        angle = torch.rand(1) * np.pi * 2
+        velocity[:, 0] = torch.cos(angle)
+        velocity[:, 1] = torch.sin(angle)
+        velocity *= torch.rand(1, 1) * 2
+        affine_matrix, target_pos = tg(velocity)
+
+        sf = torch.nn.Softmax(dim=2)
+        self.image.to(torch.device('cuda:0'))
+        d = self.image.depth_raw
+        depth = torch.arange(depth_bin).cuda() * depth_resolution + torch.min(d)
+        d = d.repeat(1, time_slices, 1, 1).unsqueeze(2).flatten(0, 1)
+        grid = F.affine_grid(affine_matrix, d.shape, align_corners=False).cuda()
+        d = F.grid_sample(d, grid, align_corners=False, padding_mode='border')
+        d = d.squeeze(2).reshape(1, time_slices, d.shape[-2], d.shape[-1])
+        import matplotlib.pyplot as plt
+        for i in range(time_slices):
+            plt.subplot(1, time_slices, i+1)
+            plt.imshow(d[0, i, :, :].detach().cpu().numpy())
+        plt.show()
+
+
+        start_time = time.time()
+        if normalize_depth:
+            d0 = (d - d.mean()) / d.std()
+            depth0 = (depth - d.mean()) / d.std()
+            res = net(d0, depth0 - network_depth_bias, **kwargs)
+        else:
+            res = net(d, depth - network_depth_bias, **kwargs)
+        torch.cuda.synchronize()
+        plan_time = time.time() - start_time
+        res1 = res[:, :32, :, :]
+        pos = res[:, -2:, :, :]
+        res = res1
+        s = list(res.shape)
+        s[1:2] = [16, 2]
+        res = res.reshape(s)
+        res = sf(res)[:, :, 1, ...]  # B, 16, H, W
+        s[2:3] = []
+        index = self.get_tensor_idx(res.shape, torch.argmax(res).detach().cpu().item())  # depth, angle, y, x
+        print('index:', index, 'quality:', '{:.4f}'.format(res[index[0], index[1], index[2], index[3]].item()))
+        # print(pos[index[0], :, index[2], index[3]].detach().cpu().numpy())
+        self._grasp['pixel_idx'] = index[-2], index[-1]
+        self._grasp['depth'] = depth[index[0]].item()
+        self._grasp['angle'] = index[1] * np.pi / 16
+        self._grasp['quality'] = res[index[0], index[1], index[2], index[3]].item()
+        self._grasp['time'] = plan_time
+        self._grasp['pos_bias'] = torch.tanh(pos[index[0], :, index[2], index[3]]).detach().cpu().numpy()
+        self._grasp['tar_bias'] = target_pos.numpy()
+
+    def dynamic_visualization(self, grasp_radius=48, grasp_color=(0.99, 0, 0), grasp_thickness=2,
                       pixel_wise_stride=8, pixel_bias=48):
         # self.image.to(torch.device('cuda:0'))
         color_img = self.image.color().clip(0, 1)

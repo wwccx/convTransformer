@@ -48,12 +48,13 @@ class Bottleneck(nn.Module):
 
 class ResNet(nn.Module):
 
-    def __init__(self, layers, inChannel=1, block=Bottleneck):
+    def __init__(self, layers, inChannel=1, block=Bottleneck, dynamic=False):
         self.inplanes = 64
         self.inChannel = inChannel
         super(ResNet, self).__init__()
-        self.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=1, padding=3,
+        self.conv1 = nn.Conv2d(inChannel, 64, kernel_size=7, stride=1, padding=3,
                                bias=False)
+        self.dynamic = dynamic
         self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
@@ -73,6 +74,16 @@ class ResNet(nn.Module):
             nn.ReLU(),
             nn.Conv2d(64, 32, kernel_size=8, padding=0),
         )
+        if dynamic:
+            self.out_pos = nn.Sequential(
+                nn.Conv2d(512, 128, kernel_size=3, padding=0),
+                nn.BatchNorm2d(128),
+                nn.ReLU(),
+                nn.Conv2d(128, 64, kernel_size=3, padding=0),
+                nn.BatchNorm2d(64),
+                nn.ReLU(),
+                nn.Conv2d(64, 32, kernel_size=8, padding=0),
+            )
         # kaiming weight normal after default init
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -121,15 +132,20 @@ class ResNet(nn.Module):
         x = self.layer2(x)
         x = self.layer3(x)
         x = self.layer4(x)
+        x = self.norm_img(x)
+        if shape is not None:
+            x = resize(x, list(shape))
+
+        pos_bias = self.out_pos(x) if self.dynamic else None
+
         if x.shape[0] == 1:
             x = x.repeat(pose.shape[0], 1, 1, 1)
         pose = self.norm_pose(pose.squeeze().view(pose.shape[0], 1, 1, 1).expand_as(x))
         x -= pose
-        if shape is not None:
-            x = resize(x, list(shape))
+
         x = self.out(x)
 
-        return x
+        return x if not self.dynamic else x, pos_bias
 
     # def forward(self, x):
     #     return self.layers(x)
