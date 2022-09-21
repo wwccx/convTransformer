@@ -117,20 +117,15 @@ class GraspDataset(torch.utils.data.Dataset):
 
 class GGSCNNGraspDataset(torch.utils.data.Dataset):
     def __init__(self, dataset_dir, pattern='train'):
-        if pattern == 'train':
-            self.dataset_dir = dataset_dir
-        elif pattern == 'validation':
-            self.dataset_dir = dataset_dir + '_validation'
-        else:
-            raise ValueError('pattern not supported')
+        self.dataset_dir = os.path.join(dataset_dir, pattern)
         a = '*'
-        self.grasps_files = glob.glob(os.path.join(self.dataset_dir, a, 'tensor', 'poseTensor_*.npz'))
+        self.grasps_files = glob.glob(os.path.join(self.dataset_dir, 'poseTensor*.npz'))
         self.grasps_files.sort()
 
-        self.img_files = glob.glob(os.path.join(self.dataset_dir, a, 'tensor', 'imgTensor_*.npz'))
+        self.img_files = glob.glob(os.path.join(self.dataset_dir, 'imgTensor*.npz'))
         self.img_files.sort()
 
-        self.metrics_files = glob.glob(os.path.join(self.dataset_dir, a, 'tensor', 'metricTensor_*.npz'))
+        self.metrics_files = glob.glob(os.path.join(self.dataset_dir, 'metricTensor*.npz'))
         self.metrics_files.sort()
         self.device = torch.device('cpu' if torch.cuda.is_available() else 'cpu')
         assert len(self.grasps_files) == len(self.img_files) == len(self.metrics_files),\
@@ -251,6 +246,7 @@ class GraspLossFunction(torch.nn.Module):
 if __name__ == '__main__':
     # dataset = GraspDataset('/home/server/convTransformer/data/fc_parallel_jaw',
     #         batch_size=64, add_noise=False)
+    d = GGSCNNGraspDataset('/home/wangchuxuan/PycharmProjects/grasp/output/tensor')
     dataset = GraspDataset('/home/server/convTransformer/data/parallel_jaw',
             batch_size=64, add_noise=False)
     import cv2

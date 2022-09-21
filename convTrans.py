@@ -404,7 +404,7 @@ class convTransformer(nn.Module):
 
         return x
     
-    def _grasp_forward(self, img, pose, shape=None):
+    def _grasp_forward(self, img, pose, shape=None, testing=False):
         img = self.patch_embed(img)
         for layer in self.layers:
             img = layer(img)
@@ -415,11 +415,20 @@ class convTransformer(nn.Module):
             img = img.repeat(pose.shape[0], 1, 1, 1)
         pose = self.norm_pose(pose.squeeze().view(pose.shape[0], 1, 1, 1).expand_as(img))
         img -= pose
-        if shape is not None:
-            img = resize(img, list(shape))
-        img = self.head(img)
-
-        return img if self.dynamic else img, pos_bias
+        if not testing:
+            if shape is not None:
+                img = resize(img, list(shape))
+            img = self.head(img)
+            return img
+        # return img, pos_bias if self.dynamic else img
+        else:
+            shape = torch.tensor(img.shape[2:])
+            res = []
+            for i in range(7):
+                # print(torch.round(shape * (1 - i / 10)))
+                x = self.head(resize(img, torch.round(shape * (1.3 - i / 10)).to(torch.int).tolist()))
+                res.append(x)
+            return res
 
     @torch.jit.ignore
     def no_weight_decay_keywords(self):

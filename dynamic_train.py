@@ -64,7 +64,7 @@ class gqTrain:
         if opt.amp_level != 'O0':
             self.network, self.optimizer = amp.initialize(self.network, self.optimizer, opt_level=opt.amp_level)
 
-        summary(self.network, (1, 96, 96), batch_size=opt.batch_size)
+        summary(self.network, (config.MODEL.IN_CHANNELS, 96, 96), batch_size=opt.batch_size)
         # self.optimizer = build_optimizer(self.network)
 
         self.currentEpoch = 0
@@ -214,7 +214,7 @@ class gqTrain:
             target_pos = target_pos.to(self.device).flatten(0, 1)
             target_class_pre, target_pos_pre = self.network(*[img, pose])
             loss = self.lossFun(target_class_pre, target_pos_pre, target, mask, target_pos)
-            loss_pos = torch.nn.functional.mse_loss(target_pos_pre, target_pos)
+            loss_pos = torch.nn.functional.l1_loss(target_pos_pre.squeeze(), target_pos)
             average_loss = (valBatchIdx * average_loss + loss.item()) / (valBatchIdx + 1)
             average_rloss = (valBatchIdx * average_rloss + loss_pos.item()) / (valBatchIdx + 1)
 
@@ -423,7 +423,7 @@ class gqTrain:
                 "•",
                 TextColumn("Loss:{task.fields[loss]:>.3f}"),
                 "•",
-                TextColumn("Accuracy:{task.fields[rloss]:>.4e}"),
+                TextColumn("RLoss:{task.fields[rloss]:>.4e}"),
                 "•",
                 TextColumn("Accuracy:{task.fields[accuracy]:>.2f}"),
                 "•",

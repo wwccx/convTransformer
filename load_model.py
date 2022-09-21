@@ -4,6 +4,13 @@ from torch import nn
 
 
 def build_model(config):
+    try:
+        x = config.MODEL.DYNAMIC
+    except AttributeError:
+        config.defrost()
+        config.MODEL.DYNAMIC = False
+        print('Loading Model, config has not DYNAMIC, set it to False')
+        config.freeze()
     if config.MODEL.ARCH == 'convTrans':
         model = convTransformer(
             in_chans=config.MODEL.IN_CHANNELS,
@@ -38,9 +45,6 @@ def build_model(config):
     #                                        fully_conv_for_grasp=True).to(self.device)
     #
     #     else:
-
-
-
 
 
     return model

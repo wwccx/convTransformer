@@ -75,7 +75,7 @@ class gqTrain:
         self.finetune_acc = np.array([])
         self.maxAcc = 0
         if not config.DATA.MIXUP_ON:
-            if config.DATA.DATASET == 'grasp':
+            if config.DATA.DATASET in ('grasp', 'real_finetune'):
                 from graspDataset import GraspLossFunction
                 self.lossFun = GraspLossFunction(config)
             elif config.DATA.DATASET == 'dynamic':
@@ -84,7 +84,7 @@ class gqTrain:
             else:
                 self.lossFun = torch.nn.CrossEntropyLoss()
         else:
-            if config.DATA.DATASET == 'grasp':
+            if config.DATA.DATASET in ('grasp', 'real_finetune'):
                 from graspDataset import GraspLossFunction
                 self.lossFun = GraspLossFunction(SoftTargetCrossEntropy())
             elif config.DATA.DATASET == 'dynamic':
@@ -520,8 +520,6 @@ class gqTrain:
 
 if __name__ == '__main__':
     gqTrain = gqTrain()
-    if opt.finetune == '':
-        gqTrain.run(epoch=opt.n_epochs)
-    else:
-        gqTrain.launch_fine_tune(opt.n_epochs)
+    gqTrain.run(epoch=opt.n_epochs)
+
     #  gqTrain.test_train()

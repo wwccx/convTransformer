@@ -90,7 +90,8 @@ def build_dataset(config, data_path='./data', transform=None):
         from DynamicGraspDataset import MixupGraspDataset as DynamicGraspDataset
         tdataset = DynamicGraspDataset(data_path, batch_size=64, add_noise=config.DATA.NOISE,
                                        time_slices=config.DATA.TIME_SLICES)
-        vdataset = DynamicGraspDataset(data_path, pattern='val', batch_size=8, add_noise=config.DATA.NOISE)
+        vdataset = DynamicGraspDataset(data_path, pattern='val', batch_size=8, add_noise=config.DATA.NOISE,
+                                       time_slices=config.DATA.TIME_SLICES)
         t = D.DataLoader(tdataset, batch_size=batch_size // 64, shuffle=True, num_workers=12)
         v = D.DataLoader(vdataset, batch_size=batch_size // 8, shuffle=True, num_workers=12)
         return t, v

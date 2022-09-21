@@ -5,14 +5,15 @@ import numpy as np
 from hardware.camera import RS
 from hardware.Ursocket import UrSocket
 from torch.utils.cpp_extension import load
-import tf.transformations as tft
+
 from torchvision.transforms.functional import resize
 from PIL.Image import BICUBIC
 import time
+from utils import vec2mat, get_extrinsic
 
 
 class Image(object):
-    def __init__(self, depth, camera_pos, rgb=None, camera_intr=None):
+    def __init__(self, depth, camera_pos, rgb=None, camera_intr=None, in_paint=False):
         """
          create an image object
         :param depth: ndarray: (H, W)
@@ -20,11 +21,15 @@ class Image(object):
         :param rgb: ndarray: (H, W, 3)
         :param camera_pos: ndarray: (3, 3) camera intrinsic matrix
         """
-        self.depth_raw = self.in_paint(depth)
+        if in_paint:
+            self.depth_raw = self.in_paint(depth)
+        else:
+            self.depth_raw = depth
+
         # self.depth_raw = depth
         self.H, self.W = depth.shape
         if rgb is not None:
-            self.rgb_raw = rgb.astype(np.float32)
+            self.rgb_raw = rgb.astype(np.float32) if isinstance(rgb, np.ndarray) else rgb.to(torch.float32)
         else:
             self.rgb_raw = np.zeros((self.H, self.W, 3)).astype(np.float32)
 
@@ -51,20 +56,34 @@ class Image(object):
     def to(self, d):
         if not isinstance(d, torch.device):
             raise TypeError('device must be torch.device')
+
         if isinstance(self.depth_raw, np.ndarray):
             self.depth_raw = torch.from_numpy(self.depth_raw).to(d).unsqueeze(0).unsqueeze(0)
-            self.rgb_raw = torch.from_numpy(self.rgb_raw).to(d).permute(2, 0, 1).unsqueeze(0)
-            self.camera_pos = torch.from_numpy(self.camera_pos).to(d)
-            if self.camera_intr is not None:
-                self.camera_intr = torch.from_numpy(self.camera_intr).to(d)
         elif isinstance(self.depth_raw, torch.Tensor):
             self.depth_raw = self.depth_raw.to(d).unsqueeze(0).unsqueeze(0)
-            self.rgb_raw = self.rgb_raw.to(d).unsqueeze(0)
-            self.camera_pos = self.camera_pos.to(d)
-            if self.camera_intr is not None:
-                self.camera_intr = self.camera_intr.to(d)
         else:
             raise TypeError('The image data must be np.ndarray or torch.Tensor')
+
+        if isinstance(self.rgb_raw, np.ndarray):
+            self.rgb_raw = torch.from_numpy(
+                self.rgb_raw
+            ).to(d).permute(2, 0, 1).unsqueeze(0)
+        elif isinstance(self.rgb_raw, torch.Tensor):
+            self.rgb_raw = self.rgb_raw.to(d).unsqueeze(0)
+        else:
+            raise TypeError('Check the image data type')
+
+        if isinstance(self.camera_pos, np.ndarray):
+            self.camera_pos = torch.from_numpy(self.camera_pos).to(d)
+        elif isinstance(self.camera_pos, torch.Tensor):
+            self.camera_pos = self.camera_pos.to(d)
+        else:
+            raise TypeError('Check the image data type')
+        if self.camera_intr is not None:
+            if isinstance(self.camera_intr, np.ndarray):
+                self.camera_intr = torch.from_numpy(self.camera_intr).to(d)
+            elif isinstance(self.camera_intr, torch.Tensor):
+                self.camera_intr = self.camera_intr.to(d)
 
     def resize(self, shape: list):
         if isinstance(self.depth_raw, np.ndarray):
@@ -120,7 +139,10 @@ class Image(object):
         if isinstance(self.rgb_raw, np.ndarray):
             return self.rgb_raw
         elif isinstance(self.rgb_raw, torch.Tensor):
-            return self.rgb_raw.permute(0, 2, 3, 1).contiguous().cpu().squeeze().numpy()
+            if self.rgb_raw.shape[-1] == 3:
+                return self.rgb_raw.contiguous().cpu().squeeze().numpy()
+            elif self.rgb_raw.shape[1] == 3:
+                return self.rgb_raw.permute(0, 2, 3, 1).contiguous().cpu().squeeze().numpy()
         else:
             raise TypeError('Check the image data type')
 
@@ -153,54 +175,78 @@ class Grasp(object):
                    depth_bin=8,
                    network_depth_bias=0.,
                    normalize_depth=True,
+                   given_depth=None,
                    **kwargs):
         """
         :return:
         """
         sf = torch.nn.Softmax(dim=2)
         self.image.to(torch.device('cuda:0'))
-        d = self.image.depth_raw
-        depth = torch.arange(depth_bin).cuda() * depth_resolution + torch.min(d)
+        d = self.image.depth_raw.to(torch.float32)
+        depth = torch.arange(depth_bin).cuda() * depth_resolution + torch.min(d) if given_depth is None else given_depth
 
         start_time = time.time()
         if normalize_depth:
             d0 = (d - d.mean()) / d.std()
             depth0 = (depth - d.mean()) / d.std()
-            d0 = d0.repeat(1, 4, 1, 1)
             res = net(d0, depth0 - network_depth_bias, **kwargs)
         else:
             res = net(d, depth - network_depth_bias, **kwargs)
         torch.cuda.synchronize()
         plan_time = time.time() - start_time
-        res1 = res[:, :32, :, :]
-        pos = res[:, -2:, :, :]
-        res = res1
-        s = list(res.shape)
-        s[1:2] = [16, 2]
-        res = res.reshape(s)
-        res = sf(res)[:, :, 1, ...]  # B, 16, H, W
-        s[2:3] = []
-        index = self.get_tensor_idx(res.shape, torch.argmax(res).detach().cpu().item())  # depth, angle, y, x
-        print('index:', index, 'quality:', '{:.4f}'.format(res[index[0], index[1], index[2], index[3]].item()))
-        print(pos[index[0], :, index[2], index[3]].detach().cpu().numpy())
-        self._grasp['pixel_idx'] = index[-2], index[-1]
-        self._grasp['depth'] = depth[index[0]].item()
-        self._grasp['angle'] = index[1] * np.pi / 16
-        self._grasp['quality'] = res[index[0], index[1], index[2], index[3]].item()
-        self._grasp['time'] = plan_time
+        if isinstance(res, torch.Tensor):
+            s = list(res.shape)
+            s[1:2] = [16, 2]
+            res = res.reshape(s)
+            res = sf(res)[:, :, 1, ...]  # B, 16, H, W
+            s[2:3] = []
+            index = self.get_tensor_idx(res.shape, torch.argmax(res).detach().cpu().item())  # depth, angle, y, x
+            print('index:', index, 'quality:', '{:.4f}'.format(res[index[0], index[1], index[2], index[3]].item()))
+            self._grasp['pixel_idx'] = index[-2], index[-1]
+            self._grasp['depth'] = depth[index[0]].item()
+            self._grasp['angle'] = index[1] * np.pi / 16
+            self._grasp['quality'] = res[index[0], index[1], index[2], index[3]].item()
+            self._grasp['time'] = plan_time
+            self._grasp['scale'] = 1
+        elif isinstance(res, list):
+            max_q = 0
+            res_index = None
+            count = 0
+            res_count = 0
+            for r in res:
+                s = list(r.shape)
+                s[1:2] = [16, 2]
+                r = r.reshape(s)
+                r = sf(r)[:, :, 1, ...]  # B, 16, H, W
+                s[2:3] = []
+                index = self.get_tensor_idx(r.shape, torch.argmax(r).detach().cpu().item())  # depth, angle, y, x
+                if r[index[0], index[1], index[2], index[3]].item() > max_q:
+                    max_q = r[index[0], index[1], index[2], index[3]].item()
+                    res_index = index
+                    res_count = count
+                count += 1
+            self._grasp['pixel_idx'] = res_index[-2], res_index[-1]
+            self._grasp['depth'] = depth[res_index[0]].item()
+            self._grasp['angle'] = res_index[1] * np.pi / 16
+            self._grasp['quality'] = max_q
+            self._grasp['time'] = plan_time
+            self._grasp['scale'] = (1.3 - res_count / 10)
 
-    def visualization(self, grasp_radius=48, grasp_color=(0.99, 0, 0), grasp_thickness=2,
+    def visualization(self, grasp_radius=48, grasp_color=(0.99, 0, 0), grasp_thickness=4,
                       pixel_wise_stride=8, pixel_bias=48):
         # self.image.to(torch.device('cuda:0'))
         color_img = self.image.color().clip(0, 1)
         depth_img = self.image.depth()
         # depth = (depth_img - np.min(depth_img)) / (np.max(depth_img) - np.min(depth_img))
-
+        pixel_bias /= self._grasp['scale']
+        grasp_radius /= self._grasp['scale']
         h_idx, w_idx = self._grasp['pixel_idx']
+        h_idx /= self._grasp['scale']
+        w_idx /= self._grasp['scale']
         angle = self._grasp['angle']
         pose = self._grasp['depth']
-        x = pixel_bias + pixel_wise_stride * w_idx
-        y = pixel_bias + pixel_wise_stride * h_idx
+        x = int(pixel_bias + pixel_wise_stride * w_idx)
+        y = int(pixel_bias + pixel_wise_stride * h_idx)
         x1 = x + grasp_radius * np.cos(angle)
         y1 = y + grasp_radius * np.sin(angle)
         x2 = x + grasp_radius * np.cos(angle + np.pi)
@@ -223,36 +269,53 @@ class Grasp(object):
                    depth_bin=8,
                    network_depth_bias=0.,
                    normalize_depth=True,
+                   time_slices=4,
                    **kwargs):
         """
         :return:
         """
         from DynamicGraspDataset import TrajectoryGenerator
         import torch.nn.functional as F
-        time_slices = 4
+        time_slices = time_slices
         tg = TrajectoryGenerator(time_slices)
         velocity = torch.zeros(1, 2)
         # angle = torch.ones(1) * 0
 
-        angle = torch.rand(1) * np.pi * 2
-        velocity[:, 0] = torch.cos(angle)
-        velocity[:, 1] = torch.sin(angle)
-        velocity *= torch.rand(1, 1) * 2
-        affine_matrix, target_pos = tg(velocity)
-
         sf = torch.nn.Softmax(dim=2)
         self.image.to(torch.device('cuda:0'))
         d = self.image.depth_raw
+        c = self.image.rgb_raw
         depth = torch.arange(depth_bin).cuda() * depth_resolution + torch.min(d)
+
+        c = c.unsqueeze(1).repeat(1, time_slices, 1, 1, 1).flatten(0, 1)
         d = d.repeat(1, time_slices, 1, 1).unsqueeze(2).flatten(0, 1)
+
+        angle = torch.rand(1) * np.pi * 2
+        velocity[:, 0] = torch.cos(angle)
+        velocity[:, 1] = torch.sin(angle)
+        velocity *= 1.2 * 96 / d.shape[-1]
+        affine_matrix, target_pos = tg(velocity)
+
         grid = F.affine_grid(affine_matrix, d.shape, align_corners=False).cuda()
         d = F.grid_sample(d, grid, align_corners=False, padding_mode='border')
         d = d.squeeze(2).reshape(1, time_slices, d.shape[-2], d.shape[-1])
+
+        grid = F.affine_grid(affine_matrix, c.shape, align_corners=False).cuda()
+        c = F.grid_sample(c, grid, align_corners=False, padding_mode='border')
+        c = c.squeeze(2).reshape(1, time_slices, c.shape[-3], c.shape[-2], c.shape[-1])
+
         import matplotlib.pyplot as plt
         for i in range(time_slices):
-            plt.subplot(1, time_slices, i+1)
+            f = plt.figure(1)
+            f.suptitle('Time slice: {}'.format(time_slices))
+            plt.subplot(2, time_slices, i+1)
             plt.imshow(d[0, i, :, :].detach().cpu().numpy())
-        plt.show()
+            plt.axis('off')
+            plt.subplot(2, time_slices, i+time_slices+1)
+            plt.imshow(c[0, i, :, :, :].permute(1, 2, 0).detach().cpu().numpy())
+            plt.axis('off')
+            plt.title('Time:{:.2f}T'.format(i/time_slices - 0.5))
+        # plt.show()
 
 
         start_time = time.time()
@@ -264,9 +327,8 @@ class Grasp(object):
             res = net(d, depth - network_depth_bias, **kwargs)
         torch.cuda.synchronize()
         plan_time = time.time() - start_time
-        res1 = res[:, :32, :, :]
-        pos = res[:, -2:, :, :]
-        res = res1
+        pos = res[1]
+        res = res[0]
         s = list(res.shape)
         s[1:2] = [16, 2]
         res = res.reshape(s)
@@ -280,8 +342,8 @@ class Grasp(object):
         self._grasp['angle'] = index[1] * np.pi / 16
         self._grasp['quality'] = res[index[0], index[1], index[2], index[3]].item()
         self._grasp['time'] = plan_time
-        self._grasp['pos_bias'] = torch.tanh(pos[index[0], :, index[2], index[3]]).detach().cpu().numpy()
-        self._grasp['tar_bias'] = target_pos.numpy()
+        self._grasp['pos_bias'] = pos[0, :, index[2], index[3]].detach().cpu().numpy() * 130
+        self._grasp['tar_bias'] = target_pos.squeeze().numpy() * d.shape[-1]
 
     def dynamic_visualization(self, grasp_radius=48, grasp_color=(0.99, 0, 0), grasp_thickness=2,
                       pixel_wise_stride=8, pixel_bias=48):
@@ -308,6 +370,17 @@ class Grasp(object):
         depth_img = cv2.circle(depth_img, (x, y), int(grasp_thickness*1.5), pose, -1)
         depth_img = cv2.arrowedLine(depth_img, (int(x1), int(y1)), (int(x2), int(y2)), pose, thickness=grasp_thickness)
         depth_img = cv2.arrowedLine(depth_img, (int(x2), int(y2)), (int(x1), int(y1)), pose, thickness=grasp_thickness)
+
+        tar_bias = self._grasp['tar_bias']
+        pos_bias = self._grasp['pos_bias']
+        color_img = cv2.arrowedLine(color_img, (int(x), int(y)), (int(x - tar_bias[0]), int(y - tar_bias[1])),
+                                    (0, 0, 1), thickness=grasp_thickness)
+        color_img = cv2.arrowedLine(color_img, (int(x), int(y)), (int(x - pos_bias[0]), int(y - pos_bias[1])),
+                                    (0, 1, 0), thickness=grasp_thickness)
+        depth_img = cv2.arrowedLine(depth_img, (int(x), int(y)), (int(x - tar_bias[0]), int(y - tar_bias[1])),
+                                    pose, thickness=grasp_thickness)
+        depth_img = cv2.arrowedLine(depth_img, (int(x), int(y)), (int(x - pos_bias[0]), int(y - pos_bias[1])),
+                                    pose, thickness=grasp_thickness)
 
         return color_img, depth_img
 
@@ -453,43 +526,6 @@ class TSDF(object):
         return image
 
 
-def vec2mat(rot_vec, trans_vec):
-    """
-    :param rot_vec: list_like [a, b, c]
-    :param trans_vec: list_like [x, y, z]
-    :return: transform mat 4*4
-    """
-    theta = np.linalg.norm(rot_vec, 2)
-    if theta:
-        rot_vec /= theta
-    out_operator = np.array([
-        [0, -rot_vec[2], rot_vec[1]],
-        [rot_vec[2], 0, -rot_vec[0]],
-        [-rot_vec[1], rot_vec[0], 0]
-    ])
-    rot_vec = np.expand_dims(rot_vec, 0)
-    rot_mat = np.cos(theta) * np.eye(3) + (1 - np.cos(theta)) * rot_vec.T.dot(rot_vec) + np.sin(
-        theta) * out_operator
-
-    trans_vec = np.expand_dims(trans_vec, 0).T
-
-    trans_mat = np.vstack(
-        (np.hstack((rot_mat, trans_vec)), [0, 0, 0, 1])
-    )
-
-    return trans_mat
-
-
-def get_extrinsic(alpha, beta, radius, camera_extrinsic):
-
-    origin = np.array([0, 0, radius])
-    targetT = tft.quaternion_from_euler(*[alpha, beta, 0, 'rxyz'])
-    targetT = tft.quaternion_matrix(targetT)
-    targetT[:3, 3] = origin - targetT[:3, 2] * radius
-
-    return camera_extrinsic @ targetT
-
-
 def test(net=None):
     vpm = 400
     v = TSDF(vpm=vpm, volume_size=np.array([0.8, 0.8, 0.3]))
@@ -544,10 +580,10 @@ def test(net=None):
     Tcam2base = np.array([
         [0, 1, 0, -0.46],
         [1, 0, 0, -0.09],
-        [0, 0, -1, 0.58],
+        [0, 0, -1, 0.68],
         [0., 0., 0., 1., ]
     ])
-    Tcam2base = get_extrinsic(0, 0.0, 0.58, Tcam2base)
+    Tcam2base = get_extrinsic(-0.0, 0.0, 0.58, Tcam2base)
     h, w = 400, 400
     img = v.rendering(Tcam2base, np.array([614.887, 0, w // 2, 0, 614.955, h // 2, 0, 0, 1]).reshape(3, 3), (h, w))
     img = img
@@ -565,6 +601,7 @@ def test(net=None):
     color_img, depth_img = grasp.visualization()
     plt.subplot(1, 2, 1)
     plt.imshow(color_img)
+    plt.title('plan time: {:.2f}ms'.format(result['time'] * 1000))
     plt.subplot(1, 2, 2)
     plt.imshow(depth_img)
     plt.title('depth: {:.4f}, quality: {:.4f}'.format(depth, q))
@@ -594,8 +631,9 @@ if __name__ == '__main__':
     # net = convTransformer(in_chans=1, num_classes=32, embed_dim=128, depths=(8,), num_heads=(8,),
     #                       patch_embedding_size=(8, 8), fully_conv_for_grasp=True, window_size=(3, 3),
     #                       norm_layer=torch.nn.BatchNorm2d).cuda()
-    save_path = './train/mixupFcParaRotationBN'
-    save_path = './train/mixupFcParaRotationCurentBest'
+    # save_path = './train/mixupFcParaRotationBN'
+    # save_path = './train/mixupFcParaRotationCurentBest'
+    save_path = './train/mixupFcParaRotationLN'
     check_points = os.listdir(save_path)
     check_points = [os.path.join(save_path, ckpt) for ckpt in check_points if ckpt.endswith('.pth')]
     check_points.sort(key=os.path.getmtime)
