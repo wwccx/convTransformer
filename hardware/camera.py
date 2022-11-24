@@ -79,6 +79,8 @@ class RS():
 if __name__ == '__main__':
     import cv2
     rs = RS(1280, 720)
+    d, c = rs.get_img()
+    cv2.imwrite('c.png', c)
     # d, c = rs.get_img()
     # # import numpy as np
     # # print(np.max(d), np.min(d))
