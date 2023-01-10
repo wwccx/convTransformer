@@ -1,5 +1,6 @@
 import numpy as np
 import cv2
+import tf.transformations as tftrans
 
 
 def vec2mat(rot_vec, trans_vec):
@@ -70,4 +71,12 @@ def rotMat2Quat(R):
     n = np.dot(q, q)
     q /= n
     return q
+
+
+def pos_quat2mat(pos, quat):
+    mat = tf.quaternion_matrix(quat)
+    mat[0:3, 3] = pos
+
+    return mat
+
 

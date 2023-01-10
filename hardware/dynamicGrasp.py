@@ -7,7 +7,7 @@ import numpy as np
 from ..convTrans import convTransformer
 from ..load_model import build_model
 import os
-
+import utils as u
 
 class DynamicGrasp:
     def __init__(self, model_ptr) -> None:
@@ -17,12 +17,14 @@ class DynamicGrasp:
         self.net = None
         self.net_config = None
         self._load_model(model_ptr)
-        self.init_pose = []
+        self.init_pos, self.init_quat = self.controller.get_current_pose()
+        self.init_tmat = u.pos_quat2mat(self.init_pos, self.init_quat)
         self.queue_size = 10
         self.img_tensor = torch.zeros((self.queue_size, 480, 640)).cuda()
         self.start = 0
         self.end = self.net_config['time_slices'] + self.start
         self._init_img_tensor()
+        self.corner_points = np.array([[1, 1, 1], [1, 478, 1], [638, 1, 1], [638, 478, 1]])
         
     def _load_model(model_ptr):
         ckps = os.listdir(model_ptr)
@@ -42,15 +44,27 @@ class DynamicGrasp:
 
     def _init_img_tensor():
         d, c = self.camera.get_img()
-        #TODO: integrate the inpaint method
+        d = u.in_paint(d)
         d = torch.from_numpy(d).cuda().unsqueeze(0).repeat((self.end-start, 1, 1))
         self.img_tensor[self.start:self.end] = d
 
     def warp_perspective(self, img):
-        #TODO: complete the warp_perspective code
-        pose, rpy = self.controller.get_current_pose()
-        mat = None
-        return img
+        
+        pos, quat = self.controller.get_current_pose()
+        mat = u.pos_quat2mat(pos, quat)
+        points = np.linalg.inv(self.camera.intr) @ self.corner_points.T
+        points = points * img[self.corner_points[:, 1], self.corner_points[:, 0]]
+        
+        point_4d = np.ones(4, 4)
+        point_4d[0:3, :] = points
+
+        point_init_frame = np.linalg.inv(self.init_tmat).dot(mat).dot(point_4d)
+        point_init_frame = point_init_frame / point_init_frame[2, :]
+        point_init_frame = self.camera.intr @ point_init_frame[0:3, :]
+        perspective_mat, _ = cv2.findHomograph(self.corner_points[:, :2], point_init_frame[:, :2])
+        perspective_img = cv2.warpPerspective(img, matrix, (img.shape[1], img.shape[0]))
+        
+        return u.inpaint(perspective_img)
 
     def get_img_slice():
         if self.end > self.start:
@@ -62,6 +76,7 @@ class DynamicGrasp:
 
     def update_img_tensor():
         d, c = self.camera.get_img()
+        d = u.in_paint(d)
         d = self.warp_perspective(d)
         self.start = (self.start + 1) % self.queue_size
         self.end = (self.end + 1) % self.queue_size

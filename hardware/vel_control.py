@@ -1,11 +1,10 @@
 import sys
 import rospy
 import moveit_commander
-import moveit_msgs.msg
 from std_msgs.msg import Float64MultiArray
 import numpy as np
 import tf.transformations as tftrans
-# from geometry_msgs.msg import PoseStamped, Pose, Point, Quaternion
+from geometry_msgs.msg import PoseStamped, Pose, Point, Quaternion
 import utils as u
 import cv2
 
@@ -76,9 +75,10 @@ class VelController:
     def set_joint_velocity(pos, angle, vel=0.1):
         target_position, target_orientation = self.get_end_pose(pos, angle)
         current_position, current_orientation = self.get_current_pose()
+        current_orientation = tf.euler_from_quaternion(current_orientation)
         vel_position = target_position - current_position
         vel_orientation_tool = target_orientation - current_orientation
-        r, p, y = current_position
+        r, p, y = current_orientation
 
         vel_orientation_base = np.array([
             [np.cos(p) * np.cos(y), -np.sin(y), 0],

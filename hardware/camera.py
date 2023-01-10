@@ -31,8 +31,13 @@ class RS():
         self.aligned_frames = self.align.process(self.frames)
         # self.decimator = rs.hole_filling_filter()
         self.intr = self.profile.get_stream(rs.stream.color).as_video_stream_profile().get_intrinsics()
-
+        
         print(self.intr)
+        self.intr = np.array([
+            [614.887, 0, 328.328],
+            [0, 614.955, 236.137],
+            [0, 0, 1]
+            ])
 
         # 跳过启动时的绿屏
         # depth_image, color_image = self.get_img()
@@ -78,7 +83,7 @@ class RS():
 
 if __name__ == '__main__':
     import cv2
-    rs = RS(1280, 720)
+    rs = RS(640, 480)
     d, c = rs.get_img()
     cv2.imwrite('c.png', c)
     # d, c = rs.get_img()
