@@ -26,7 +26,7 @@ class DynamicGrasp:
         self._init_img_tensor()
         self.corner_points = np.array([[1, 1, 1], [1, 478, 1], [638, 1, 1], [638, 478, 1]])
         
-    def _load_model(model_ptr):
+    def _load_model(self, model_ptr):
         ckps = os.listdir(model_ptr)
         ckps = [os.path.join(model_ptr, c) for c in ckps if c.endswith('.pth')]
         ckps.sort(key=os.path.getmtime)
@@ -37,15 +37,15 @@ class DynamicGrasp:
         latest_ckp = ckps[-1]
 
         save_data = torch.load(latest_ckp)
-        print(f'Epoch:{save_data['epoch']}')
+        print(f"Epoch:{save_data['epoch']}")
         self.net.load_state_dict(save_data['model'])
         self.net.eval()
         self.net_config = config
 
-    def _init_img_tensor():
+    def _init_img_tensor(self):
         d, c = self.camera.get_img()
         d = u.in_paint(d)
-        d = torch.from_numpy(d).cuda().unsqueeze(0).repeat((self.end-start, 1, 1))
+        d = torch.from_numpy(d).cuda().unsqueeze(0).repeat((self.end-self.start, 1, 1))
         self.img_tensor[self.start:self.end] = d
 
     def warp_perspective(self, img):
@@ -62,19 +62,19 @@ class DynamicGrasp:
         point_init_frame = point_init_frame / point_init_frame[2, :]
         point_init_frame = self.camera.intr @ point_init_frame[0:3, :]
         perspective_mat, _ = cv2.findHomograph(self.corner_points[:, :2], point_init_frame[:, :2])
-        perspective_img = cv2.warpPerspective(img, matrix, (img.shape[1], img.shape[0]))
+        perspective_img = cv2.warpPerspective(img, perspective_mat, (img.shape[1], img.shape[0]))
         
         return u.inpaint(perspective_img)
 
-    def get_img_slice():
+    def get_img_slice(self):
         if self.end > self.start:
             return self.img_tensor[self.start:self.end]
         else:
             return torch.stack(
-                    (self.img_tensor[self.start:], self.[:end]), dim=0
+                    (self.img_tensor[self.start:], self.img_tensor[:self.end]), dim=0
                     )
 
-    def update_img_tensor():
+    def update_img_tensor(self):
         d, c = self.camera.get_img()
         d = u.in_paint(d)
         d = self.warp_perspective(d)

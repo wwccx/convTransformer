@@ -4,7 +4,10 @@ from torch.nn import functional as F
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 from torch.utils.cpp_extension import load
 from torch.autograd import Function
-from apex import amp
+try:
+    from apex import amp
+except ImportError:
+    amp = None
 from torchvision.transforms.functional import resize
 convAttn = load(name="convAttn",
                 extra_include_paths=["include"],

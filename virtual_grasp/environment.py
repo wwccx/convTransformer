@@ -437,6 +437,8 @@ class VirtualEnvironment(object):
 
 if __name__ == '__main__':
     vGrasp = VirtualEnvironment(num_robots=1)
+    # import cv2
+    # cv2.waitKey(0)
     vGrasp.calibrate_camera()
 
 
