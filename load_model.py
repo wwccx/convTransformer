@@ -1,7 +1,7 @@
 from convTrans import convTransformer
 from compare_networks import ResNet
 from torch import nn
-
+from gqcnn import GQCNN 
 
 def build_model(config):
     try:
@@ -28,6 +28,9 @@ def build_model(config):
         )
     elif config.MODEL.ARCH == 'res':
         model = ResNet([2, 2, 2, 2], inChannel=config.MODEL.IN_CHANNELS)
+    
+    elif config.MODEL.ARCH == 'gqcnn':
+        model = GQCNN()
 
     else:
         raise NotImplementedError(f"Unkown model: {config.MODEL.ARCH}")

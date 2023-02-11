@@ -144,8 +144,12 @@ class ResNet(nn.Module):
         x -= pose
 
         x = self.out(x)
+        if self.dynamic:
+            return x, pos_bias
+        else:
+            return x
 
-        return x if not self.dynamic else x, pos_bias
+        # return x if not self.dynamic else x, pos_bias
 
     # def forward(self, x):
     #     return self.layers(x)
