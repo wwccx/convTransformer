@@ -84,9 +84,9 @@ class VirtualEnvironment(object):
                            basePosition=[0.0, i * self.d, -0.63 * 1.7],
                            baseOrientation=(0.000000, 0.000000, 0.0, 1.0),
                            globalScaling=1.7, useFixedBase=True)
-            self.p.changeDynamics(t, -1, mass=0, lateralFriction=6,
-                                  restitution=0.98, rollingFriction=0.07, spinningFriction=0.15,
-                                  contactStiffness=1e6, contactDamping=0.5)
+            self.p.changeDynamics(t, -1, mass=0, lateralFriction=0,
+                                  restitution=0.999, rollingFriction=0, spinningFriction=0,
+                                  contactStiffness=1e6, contactDamping=0)
             self.tables.append(t)
 
         robotStartPos = [0.0, 0.0, 1]
@@ -435,10 +435,136 @@ class VirtualEnvironment(object):
         return coordinate, quat, color_img, widthGripper
 
 
+# class DynamicEnv(VirtualEnvironment):
+#     def __init__(self, num_robots):
+#         super(DynamicEnv, self).__init__(num_robots=num_robots)
+#
+#         self.ori_init = self.p.getQuaternionFromEuler([0, 3.141592654 / 2, 0])
+#         self.init_joints_angle = [0.23813124282501125, -1.66718850408224, -0.9366544912538485, -2.125146459392779,
+#                                   1.5701356825001347, 0.23663993167973682, 0.0, 0.0]
+#         self.position_end_init = self.p.getLinkState(self.robotId[0], self.endEffectorIndex)[4]
+#         for d, uid in enumerate(self.robotId):
+#             self.move_joints(self.init_joints_angle, uid)
+#
+#         time.sleep(1)
+#         self.objects = glob(os.path.join(self.meshPath, '*.obj'))
+#         self.obj_idx = []
+#         self.z_pos = []
+#         self.scale = []
+#         urdf, s, z = self.generate_urdf(self.objects[0])
+#         self.obj_idx.append(self.p.loadURDF(urdf, basePosition=[0.0, 0 * self.d, z * s * 2],
+#                                             baseOrientation=(0.400000, 0.000000, 0.0, 1.0),
+#                                             globalScaling=s))
+#         self.z_pos.append(z)
+#         self.scale.append(s)
+#         self.p.changeDynamics(self.obj_idx[0], -1, mass=0, lateralFriction=7,
+#                               restitution=0.98, rollingFriction=5, spinningFriction=5,
+#                               contactStiffness=1e9, contactDamping=5)
+#
+#     def update_camera(self, h=640, w=640, n=0.0001, f=1.5):
+#         projectionMatrix = (2, 0, 0, 0, 0, 2, 0, 0, 0, 0, -2 / (f - n), 0, 0, 0, -(f + n) / (f - n), 1)
+#         image_renderer = p.ER_BULLET_HARDWARE_OPENGL
+#
+#         init_camera_vector = (1, 0, 0)  # x-axis
+#         init_up_vector = (0, 0, 1)  # z-axis
+#
+#         obs = p.getLinkState(self.robotId[0], self.endEffectorIndex)
+#         posEnd = obs[4]
+#         oriEnd = obs[5]
+#
+#         rot_matrix = p.getMatrixFromQuaternion(oriEnd)
+#         rot_matrix = np.array(rot_matrix).reshape(3, 3)
+#         camera_vector = rot_matrix.dot(init_camera_vector)
+#         up_vector = rot_matrix.dot(init_up_vector)
+#         view_matrix_gripper = p.computeViewMatrix(posEnd + 0.2 * camera_vector, posEnd + 0.3 * camera_vector,
+#                                                   up_vector)
+#         # print(np.array(view_matrix_gripper).reshape(4, 4))
+#         width, height, rgb, depth, segment = p.getCameraImage(w, h, view_matrix_gripper, projectionMatrix,
+#                                                               shadow=0,
+#                                                               flags=p.ER_NO_SEGMENTATION_MASK,
+#                                                               renderer=image_renderer)
+#         depth = 2 * depth - 1
+#         rgb = cv2.cvtColor(rgb, cv2.COLOR_RGBA2RGB)
+#         depth = (f + n + depth * (f - n)) / 2
+#
+#         rgb = rgb[80:560, 80:560, :]
+#         depth = depth[80:560, 80:560]
+#
+#         return rgb, depth, posEnd
+#
+#     def pixel2base(self, pixelIndex, angle, depthImage=None, depth=None, dx=0, dy=0):
+#         assert depthImage is not None or depth is not None, 'depthImage and depth cannot be None at the same time'
+#         xp, yp = pixelIndex
+#         xp = max(0, min(xp, 639 - dx * 2))
+#         yp = max(0, min(yp, 639 - dy * 2))
+#
+#         if depthImage is not None:
+#             z = depthImage[yp, xp]  # meter
+#         else:
+#             z = depth - 0.15
+#         # print('z:', z)
+#         # Pobj2cam = np.dot(np.linalg.inv(self.cameraMat), [[xp+dx], [yp+dy], [1]]) * z  # meter
+#         Pobj2cam = np.array([[(xp + dx - 320) / 640], [(yp + dy - 320) / 640], [z]])
+#
+#         Tcam2end = np.array([
+#             [0, 0, 1, 0.2],
+#             [-1, 0, 0, 0],
+#             [0, -1, 0, 0],
+#             [0, 0, 0, 1]
+#         ])
+#
+#         Rend2cam = np.array([
+#             [0, -1, 0],
+#             [0, 0, -1],
+#             [1, 0, 0]
+#         ])
+#
+#         Tobj2cam = np.vstack((
+#             np.hstack(
+#                 (np.array(cv2.Rodrigues(np.array([0, 0, -angle], dtype=np.float64))[0]).dot(Rend2cam),
+#                  Pobj2cam)
+#             ), np.array([[0, 0, 0, 1]])
+#         ))
+#
+#         obs = p.getLinkState(self.robotId[0], self.endEffectorIndex)
+#         Pend2base = obs[4]
+#         Rend2base = np.array(p.getMatrixFromQuaternion(obs[5])).reshape(3, 3)
+#         Tend2base = np.vstack((
+#             np.hstack(
+#                 (Rend2base, np.expand_dims(np.array(Pend2base), 0).T)
+#             ), np.array([[0, 0, 0, 1]])
+#         ))
+#
+#         Tobj2base = Tend2base.dot(Tcam2end.dot(Tobj2cam))
+#
+#         quatObj2Base = self.rotMat2Quat(Tobj2base[0:3, 0:3])
+#         posObj2Base = Tobj2base[0:3, 3]
+#         _, quatObj2Base = p.invertTransform([0, 0, 0], quatObj2Base)
+#         return quatObj2Base, posObj2Base
+
+
 if __name__ == '__main__':
-    vGrasp = VirtualEnvironment(num_robots=1)
-    # import cv2
-    # cv2.waitKey(0)
-    vGrasp.calibrate_camera()
+    self = VirtualEnvironment(num_robots=1)
+    ori_init = self.p.getQuaternionFromEuler([0, 3.141592654 / 2, 0])
+    init_joints_angle = [0.23813124282501125, -1.66718850408224, -0.9366544912538485, -2.125146459392779,
+                              1.5701356825001347, 0.23663993167973682, 0.0, 0.0]
+    self.position_end_init = self.p.getLinkState(self.robotId[0], self.endEffectorIndex)[4]
+    for d, uid in enumerate(self.robotId):
+        self.move_joints(init_joints_angle, uid)
+    self.objects = glob(os.path.join(self.meshPath, '*.obj'))
+    self.obj_idx = []
+    self.z_pos = []
+    self.scale = []
+    urdf, s, z = self.generate_urdf(self.objects[0])
+    self.obj_idx.append(self.p.loadURDF(urdf, basePosition=[0.0, 0 * self.d, z * s * 2],
+                                        baseOrientation=(0.400000, 0.000000, 0.0, 1.0),
+                                        globalScaling=s))
+    self.z_pos.append(z)
+    self.scale.append(s)
+    self.p.changeDynamics(self.obj_idx[0], -1, mass=0, lateralFriction=7,
+                          restitution=0.98, rollingFriction=5, spinningFriction=5,
+                          contactStiffness=1e9, contactDamping=5)
+    a = 1
+    # vGrasp.calibrate_camera()
 
 

@@ -40,8 +40,8 @@ class VirtualGraspDataset():
         for idx_robot in range(self._env.numRobots):
             urdf, s, z = self._env.generate_urdf(self.objects[idx_obj[idx_robot]])
             obj_idx.append(self._env.p.loadURDF(urdf, basePosition=[0.0, idx_robot * self._env.d, z * s * 2],
-                                               baseOrientation=(0.400000, 0.000000, 0.0, 1.0),
-                                               globalScaling=s))
+                                                baseOrientation=(0.400000, 0.000000, 0.0, 1.0),
+                                                globalScaling=s))
             z_pos.append(z)
             scale.append(s)
             self._env.p.changeDynamics(idx_obj[idx_robot], -1, mass=0, lateralFriction=7,

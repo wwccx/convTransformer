@@ -311,6 +311,15 @@ class PatchMerging(nn.Module):
         return x
 
 
+class ConvLayerNorm(nn.Module):
+    def __init__(self, dim):
+        super(ConvLayerNorm, self).__init__()
+        self.norm = nn.LayerNorm(dim)
+
+    def forward(self, x):
+        x = self.norm(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+        return x
+
 class convTransformer(nn.Module):
     def __init__(self, in_chans=3, num_classes=10, embed_dim=96, depths=(2, 2, 6, 2), num_heads=(3, 6, 12, 24),
                  patch_embedding_size=(4, 4), patch_merging_size=(2, 2),
@@ -321,7 +330,7 @@ class convTransformer(nn.Module):
         self.dynamic = dynamic
         self.num_classes = num_classes
 
-        self.patch_embed = patchEmbedding(in_chans=in_chans, embed_dim=embed_dim, norm_layer=nn.BatchNorm2d,
+        self.patch_embed = patchEmbedding(in_chans=in_chans, embed_dim=embed_dim, norm_layer=None,
                                           patch_size=patch_embedding_size)
 
         self.layers = nn.ModuleList()
@@ -344,21 +353,21 @@ class convTransformer(nn.Module):
             self.layers.append(layer)
         if fully_conv_for_grasp:
             self.avgpool = torch.nn.Identity()
-            self.norm_img = nn.BatchNorm2d(int(embed_dim * 2 ** (len(depths) - 1)))
+            self.norm_img = ConvLayerNorm(int(embed_dim * 2 ** (len(depths) - 1)))
             # self.norm_img = nn.Identity()
-            self.norm_pose = nn.BatchNorm2d(int(embed_dim * 2 **(len(depths) - 1)))
+            self.norm_pose = ConvLayerNorm(int(embed_dim * 2 **(len(depths) - 1)))
             self.head = nn.Sequential(
                 nn.Conv2d(int(embed_dim * 2 ** (len(depths) - 1)),
                           int(embed_dim * 2 ** (len(depths) - 2)),
                           kernel_size=3, stride=1
                           ),
-                nn.BatchNorm2d(int(embed_dim * 2 ** (len(depths) - 2))),
+                ConvLayerNorm(int(embed_dim * 2 ** (len(depths) - 2))),
                 nn.ReLU(),
                 nn.Conv2d(int(embed_dim * 2 ** (len(depths) - 2)),
                           int(embed_dim * 2 ** (len(depths) - 3)),
                           kernel_size=3, stride=1
                           ),
-                nn.BatchNorm2d(int(embed_dim * 2 ** (len(depths) - 3))),
+                ConvLayerNorm(int(embed_dim * 2 ** (len(depths) - 3))),
                 nn.ReLU(),
                 nn.Conv2d(int(embed_dim * 2 ** (len(depths) - 3)),
                           num_classes,
@@ -371,13 +380,13 @@ class convTransformer(nn.Module):
                               int(embed_dim * 2 ** (len(depths) - 2)),
                               kernel_size=3, stride=1
                               ),
-                    nn.BatchNorm2d(int(embed_dim * 2 ** (len(depths) - 2))),
+                    ConvLayerNorm(int(embed_dim * 2 ** (len(depths) - 2))),
                     nn.ReLU(),
                     nn.Conv2d(int(embed_dim * 2 ** (len(depths) - 2)),
                               int(embed_dim * 2 ** (len(depths) - 3)),
                               kernel_size=3, stride=1
                               ),
-                    nn.BatchNorm2d(int(embed_dim * 2 ** (len(depths) - 3))),
+                    ConvLayerNorm(int(embed_dim * 2 ** (len(depths) - 3))),
                     nn.ReLU(),
                     nn.Conv2d(int(embed_dim * 2 ** (len(depths) - 3)),
                               2,
@@ -412,8 +421,9 @@ class convTransformer(nn.Module):
         for layer in self.layers:
             img = layer(img)
         img = self.norm_img(img)
-        if self.dynamic:
-            pos_bias = self.head_pos(img)
+
+        pos_bias = self.head_pos(img) if self.dynamic else None
+
         if img.shape[0] == 1:
             img = img.repeat(pose.shape[0], 1, 1, 1)
         pose = self.norm_pose(pose.squeeze().view(pose.shape[0], 1, 1, 1).expand_as(img))
@@ -422,8 +432,11 @@ class convTransformer(nn.Module):
             if shape is not None:
                 img = resize(img, list(shape))
             img = self.head(img)
-            return img
-        # return img, pos_bias if self.dynamic else img
+            # return img
+            if self.dynamic:
+                return img, pos_bias
+            else:
+                return img
         else:
             shape = torch.tensor(img.shape[2:])
             res = []

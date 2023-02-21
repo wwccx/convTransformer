@@ -1,0 +1,5 @@
+train/
+*.pth
+objects/
+log.txt
+data/

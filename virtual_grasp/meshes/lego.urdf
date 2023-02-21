@@ -1,0 +1,33 @@
+
+<?xml version="1.0" ?>
+<robot name="/home/wcx/convTransformer/virtual_grasp/meshes/lego.urdf">
+  <link name="legobrick">
+    <contact>
+      <lateral_friction value="10.0"/>
+      <rolling_friction value="0.0"/>
+      <contact_cfm value="10.0"/>
+      <contact_erp value="0.0"/>
+    </contact>
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.15815050864149022 0.12440230465003903 -0.15907778157564478"/>
+       <mass value="30.652089200071092"/>
+       <inertia ixx="0.4616088472362738" ixy="7.866058352324744e-05" ixz="-0.0014955517927948449" iyy="0.651431705283128" iyz="0.00018159384785406026" izz="0.4627843159550637"/>
+    </inertial>
+    <visual>
+      <origin rpy="1.570796 0 0" xyz="0 0 0"/>
+      <geometry>
+	<mesh filename="/home/wcx/convTransformer/virtual_grasp/meshes/vhacd/lego_vhacd.obj" scale="1 1 1"/>
+      </geometry>
+       <material name="blue">
+	<color rgba="0.4 0.4 1.0 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="1.570796 0 0" xyz="0 0 0"/>
+      <geometry>
+	<mesh filename="/home/wcx/convTransformer/virtual_grasp/meshes/vhacd/lego_vhacd.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+  </link>
+</robot>
+	

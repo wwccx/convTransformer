@@ -11,11 +11,11 @@ from torch.optim.optimizer import Optimizer
 
 class ATTCG(Optimizer):
 
-    def __init__(self, params, lr=1e-3, beta=0.999):
+    def __init__(self, params, lr=1e-3, beta=0.999, weight_decay=0.):
         if not 0.0 <= lr:
             raise ValueError("Invalid learning rate: {}".format(lr))
 
-        defaults = dict(lr=lr, beta=beta)
+        defaults = dict(lr=lr, beta=beta, weight_decay=weight_decay)
         super(ATTCG, self).__init__(params, defaults)
 
     @torch.no_grad()
@@ -35,6 +35,8 @@ class ATTCG(Optimizer):
                 if grad.is_sparse:
                     raise RuntimeError('ATTCG does not support sparse gradients')
                 state = self.state[p]
+                if self.state['weight_decay'] > 0:
+                    grad = grad.add(p, alpha=self.state['weight_decay'])
 
                 # State initialization
                 if len(state) == 0:

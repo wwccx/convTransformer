@@ -30,8 +30,8 @@ try:
     grad_conv = np.load(os.path.join(training_dict[-index], 'grad_value.npy'))
 except:
     grad_conv = np.array([0])
-    
-compare_dict = list(map(int, opt.compare.split(' ')))
+if opt.compare:
+    compare_dict = list(map(int, opt.compare.split(' ')))
 legend = opt.legend.split(' ')
 
 if opt.compare:

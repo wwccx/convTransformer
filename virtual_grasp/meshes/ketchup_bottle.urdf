@@ -1,0 +1,33 @@
+
+<?xml version="1.0" ?>
+<robot name="/home/wcx/convTransformer/virtual_grasp/meshes/ketchup_bottle.urdf">
+  <link name="legobrick">
+    <contact>
+      <lateral_friction value="10.0"/>
+      <rolling_friction value="0.0"/>
+      <contact_cfm value="10.0"/>
+      <contact_erp value="0.0"/>
+    </contact>
+    <inertial>
+      <origin rpy="0 0 0" xyz="-6.798308174701351e-05 6.216942347757418e-06 -0.01961617634528801"/>
+       <mass value="0.6450240375566046"/>
+       <inertia ixx="0.0008152147013166782" ixy="-2.3242400767305547e-08" ixz="-5.907881024169881e-06" iyy="0.0008152110353651878" iyz="-1.7388432769345633e-06" izz="0.00014419267816300927"/>
+    </inertial>
+    <visual>
+      <origin rpy="1.570796 0 0" xyz="0 0 0"/>
+      <geometry>
+	<mesh filename="/home/wcx/convTransformer/virtual_grasp/meshes/vhacd/ketchup_bottle_vhacd.obj" scale="1 1 1"/>
+      </geometry>
+       <material name="blue">
+	<color rgba="0.4 0.4 1.0 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="1.570796 0 0" xyz="0 0 0"/>
+      <geometry>
+	<mesh filename="/home/wcx/convTransformer/virtual_grasp/meshes/vhacd/ketchup_bottle_vhacd.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+  </link>
+</robot>
+	
