@@ -42,7 +42,7 @@ class VelController:
 
     def get_current_pose(self):
 
-        current_pose = self.get_current_pose().pose
+        pose = self.get_current_pose().pose
         current_position = np.array([pose.position.x, pose.position.y, pose.position.z])
         current_orientation = np.array([pose.orientation.x, pose.orientation.z, pose.orientation.y, pose.orientation.w])
         return current_position, current_orientation
@@ -64,7 +64,7 @@ class VelController:
         current_position, current_orientation = self.get_current_pose()
 
         Tend2base = np.eye(4)
-        Tend2base[0:3, 3] = current_pose
+        Tend2base[0:3, 3] = pos
         Tend2base[0:3, 0:3] = u.quat2RotMat(current_orientation)
 
         Tobj2base = Tend2base.dot(self.Ttool2end).dot(self.Tcam2tool).dot(self.Tobj2cam)
@@ -72,7 +72,7 @@ class VelController:
         
         return Tend2base[0:3, 3], np.array(tftrans.euler_from_matrix(Tend2base[0:3, 0:3]))
 
-    def set_joint_velocity(pos, angle, vel=0.1):
+    def set_joint_velocity(self, pos, angle, vel=0.1):
         target_position, target_orientation = self.get_end_pose(pos, angle)
         current_position, current_orientation = self.get_current_pose()
         current_orientation = tf.euler_from_quaternion(current_orientation)

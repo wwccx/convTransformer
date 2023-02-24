@@ -114,7 +114,7 @@ class VirtualEnvironment(object):
             self.resetJointPoses(self.robotId[i])
         time.sleep(1)
         for i in range(self.numRobots):
-            p.resetBasePositionAndOrientation(self.robotId[i], [-0.5, i * self.d, -0.07], [0, 0, 0, 1])
+            p.resetBasePositionAndOrientation(self.robotId[i], [-0.6, i * self.d, -0.07], [0, 0, 0, 1])
 
     @staticmethod
     def generate_urdf(obj_file, path=''):
@@ -304,8 +304,11 @@ class VirtualEnvironment(object):
             # posEnd = action[0:3]
             g = action[-1]
             oriEnd = p.getQuaternionFromEuler([action[3], action[4], action[5]])
-            jointPose = vGrasp.get_joints_angle([action[0], action[1], action[2]], oriEnd, g, self.robotId[0])
-            vGrasp.move_joints(jointPose, self.robotId[0])
+            jointPose = self.get_joints_angle([action[0], action[1], action[2]], oriEnd, g, self.robotId[0])
+            self.move_joints(jointPose, self.robotId[0])
+            # vGrasp.move_joints(jointPose, self.robotId[0]))
+            # jointPose = vGrasp.get_joints_angle([action[0], action[1], action[2]], oriEnd, g, self.robotId[0])
+            # vGrasp.move_joints(jointPose, self.robotId[0])
             rgbImage, depth = self.update_camera()
             pass
             rgbImage = cv2.cvtColor(

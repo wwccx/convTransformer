@@ -239,6 +239,9 @@
       <geometry>
         <mesh filename="../meshes/ur5/visual/l_gripper_tip_scaled.stl" scale="1 1 1"/>
       </geometry>
+      <material name="white">
+         <color rgba="1 1 1 .2"/>
+      </material>
     </visual>
     <collision>
       <origin rpy="0 0 0" xyz="0 0 0.042"/>
@@ -270,6 +273,9 @@
       <geometry>
         <mesh filename="../meshes/ur5/visual/l_gripper_tip_scaled.stl" scale="1 1 1"/>
       </geometry>
+      <material name="white">
+         <color rgba="1 1 1 .2"/>
+      </material>
     </visual>
     <collision>
       <origin rpy="0 0 0" xyz="0 0 0.042"/>
