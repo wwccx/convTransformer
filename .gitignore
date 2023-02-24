@@ -3,3 +3,6 @@ train/
 objects/
 log.txt
 data/
+__pycache__/
+*.obj
+*.urdf
