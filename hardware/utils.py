@@ -74,9 +74,16 @@ def rotMat2Quat(R):
 
 
 def pos_quat2mat(pos, quat):
-    mat = tf.quaternion_matrix(quat)
+    mat = tftrans.quaternion_matrix(quat)
     mat[0:3, 3] = pos
 
     return mat
+
+def rpy2quat(rpy):
+    return np.array(tftrans.quaternion_from_euler(*rpy))
+
+def quat2rpy(quat):
+    return np.array(tftrans.euler_from_quaternion(quat))
+
 
 
