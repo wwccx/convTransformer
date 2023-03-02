@@ -195,7 +195,7 @@ class DynamicGrasp():
         self.prediction_model.to('cuda')
         self._env = DynamicEnv(num_robots=1)
 
-    def main_action(self, v=0.02):
+    def main_action(self, v=-0.02):
         img_tensor = torch.ones(1, 6, 480, 480).cuda()
         self.set_obj_movement(y=v)
         for i in range(6):
@@ -205,10 +205,10 @@ class DynamicGrasp():
             # depth_image[200:300, 370:400] = 0.4
             depth_tensor = torch.from_numpy(depth_image).unsqueeze(0).unsqueeze(0).cuda()
             img_tensor[:, i, :, :] = depth_tensor
-            time.sleep(0.5)
+            time.sleep(0.2)
 
         while position_end[2] > 0.25:
-            while time.time() - time_step < 0.5:
+            while time.time() - time_step < 0.2:
                 pass
             try:
                 _, depth_image, position_end, ori_end = self._env.update_camera()
@@ -235,9 +235,9 @@ class DynamicGrasp():
                     else:
                         x = img[0, i, :, :]
                     plt.imshow(x)
-                self.set_obj_movement()
-                plt.show()
-                self.set_obj_movement(y=v)
+                # self.set_obj_movement()
+                # plt.show()
+                # self.set_obj_movement(y=v)
 
                 # pos[2] = self._env.init_end_pos[2]
                 self.move((quat, pos + [0, 0, 0.05]), jaw=1)
@@ -349,7 +349,7 @@ class DynamicGrasp():
         print('velocity:', pos[index[0], :, index[2], index[3]].detach().cpu().numpy())
         x = index[3] * 8 + 48
         y = index[2] * 8 + 48
-        velocity = np.round(-100 * pos[index[0], :, index[2], index[3]].detach().cpu().numpy()).astype(np.int32)
+        velocity = np.round(-250 * pos[index[0], :, index[2], index[3]].detach().cpu().numpy()).astype(np.int32)
         quatObj2Base, posObj2Base = self._env.pixel2base((x + velocity[0], y + velocity[0]), index[1]*np.pi/16, None,
                                                          z_pose[index[0]].detach().cpu().item(), 80, 80)
         return quatObj2Base, posObj2Base, (x, y, index[1], z_pose_init[index[0]].item(),
