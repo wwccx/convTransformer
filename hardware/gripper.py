@@ -6,6 +6,7 @@ import serial
 class Gripper():
     def __init__(self):
         self.ser = serial.Serial("/dev/ttyACM0", 115200)
+        self.gripper_initial()
 
     def gripper_initial(self):  # 初始化
         self.ser.write('FFFEFDFC 01 0802 0100 00000000 FB'.encode())

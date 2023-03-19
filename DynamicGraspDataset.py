@@ -194,13 +194,14 @@ class DynamicGraspLossFunction(torch.nn.Module):
             self.classify_loss_function = torch.nn.CrossEntropyLoss(weight=torch.tensor(config.DATA.LOSS_WEIGHT).cuda())
         else:
             self.classify_loss_function = SoftTargetCrossEntropy()
-        self.regress_loss_function = torch.nn.L1Loss()
+        # self.regress_loss_function = torch.nn.L1Loss()
+        self.regress_loss_function = torch.nn.MSELoss()
 
     def forward(self, classification, position, target, mask, target_pos):
         classification = classification.squeeze()
         position = position.squeeze()
         valid_input = classification[torch.where(mask > 0)].view(-1, 2)
-        return self.classify_loss_function(valid_input, target) + 2 * self.regress_loss_function(position, target_pos)
+        return self.classify_loss_function(valid_input, target) + self.regress_loss_function(position, target_pos)
 
 
 class TrajectoryGenerator:
@@ -239,7 +240,7 @@ if __name__ == '__main__':
     import torch.utils.data as D
     from matplotlib import pyplot as plt
     batch_size = 8
-    time_slices = 4
+    time_slices = 6
     dataset = MixupGraspDataset('./data/', batch_size=64,
                                 add_noise=False, time_slices=time_slices)
     t = D.DataLoader(dataset, batch_size=1, shuffle=False)
@@ -254,4 +255,5 @@ if __name__ == '__main__':
             for i in range(time_slices):
                 plt.subplot(time_slices, 1, i + 1)
                 plt.imshow(img[j, i, :, :].detach().numpy())
+            print(tar_pos[j])
             plt.show()

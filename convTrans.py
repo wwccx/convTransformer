@@ -220,7 +220,8 @@ class convAttention(nn.Module):
 
 class ConvTransBlock(nn.Module):
     def __init__(self, dim, num_heads, win_size=(7, 7), attn_drop=0., conv_drop=0., drop_path=0.,
-                 conv_dim_ratio=4, act_layer=nn.GELU, default_shape=(32, 24, 24), norm_layer=nn.LayerNorm):
+                 conv_dim_ratio=4, act_layer=nn.GELU, default_shape=(32, 24, 24), norm_layer=nn.LayerNorm,
+                 keep_shape=False):
         super().__init__()
         self.norm1 = norm_layer(dim)
         self.norm2 = norm_layer(dim)
@@ -229,6 +230,8 @@ class ConvTransBlock(nn.Module):
                                            attn_drop=attn_drop, default_shape=default_shape)
         self.convLayers = convLayers(dim, hidden_dim=int(dim * conv_dim_ratio), act_layer=act_layer, drop=conv_drop)
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+        self.win_size = win_size
+        self.keep_shape = keep_shape
 
     def forward(self, x):
         B, C, H, W = x.shape
@@ -249,7 +252,9 @@ class ConvTransBlock(nn.Module):
             ))
         elif isinstance(self.norm1, nn.BatchNorm2d):
             x = x + self.drop_path(self.convLayers(self.norm2(x)))
-
+        if not self.keep_shape:
+            x = x[..., self.win_size[0]//2:-(self.win_size[0]//2),
+                  self.win_size[1]//2:-(self.win_size[1]//2)]
         return x
 
 
@@ -274,7 +279,7 @@ class patchEmbedding(nn.Module):
 class BasicLayer(nn.Module):
     def __init__(self, depth, dim, num_heads, win_size, conv_dim_ratio=4,
                  attn_drop=0., conv_drop=0., drop_path=[0.], downsample=None, default_shape=(32, 24, 24),
-                 norm_layer=nn.LayerNorm):
+                 norm_layer=nn.LayerNorm, keep_shape=True):
         super().__init__()
         self.blocks = nn.ModuleList([
             ConvTransBlock(dim,
@@ -285,7 +290,8 @@ class BasicLayer(nn.Module):
                            conv_drop=conv_drop,
                            drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
                            default_shape=default_shape,
-                           norm_layer=norm_layer
+                           norm_layer=norm_layer,
+                           keep_shape=keep_shape
                            ) for i in range(depth)
         ])
         # if downsample is not None:
@@ -330,9 +336,14 @@ class convTransformer(nn.Module):
         self.dynamic = dynamic
         self.num_classes = num_classes
 
-        self.patch_embed = patchEmbedding(in_chans=in_chans, embed_dim=embed_dim, norm_layer=None,
+        self.patch_embed = patchEmbedding(in_chans=in_chans, embed_dim=embed_dim, norm_layer=nn.BatchNorm2d,
                                           patch_size=patch_embedding_size)
-
+        if isinstance(window_size, tuple):
+            window_size = [window_size for _ in depths]
+        elif isinstance(window_size, list):
+            assert len(window_size) == 1 or len(window_size) == len(depths), 'window size can not be broadcast'
+            if len(window_size) == 1:
+                window_size = window_size * len(depths)
         self.layers = nn.ModuleList()
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]
 
@@ -340,7 +351,7 @@ class convTransformer(nn.Module):
             layer = BasicLayer(depth=i_layer,
                                dim=int(embed_dim * 2 ** i),
                                num_heads=num_heads[i],
-                               win_size=window_size,
+                               win_size=window_size[i],
                                conv_dim_ratio=4,
                                conv_drop=0,
                                attn_drop=0,
@@ -348,30 +359,42 @@ class convTransformer(nn.Module):
                                default_shape=(B, int(patch_resolution[0]*2**(-i)), int(patch_resolution[1]*2**(-i))),
                                downsample=PatchMerging(embed_dim * 2 ** i, patch_merging_size=patch_merging_size)
                                if i + 1 < len(depths) else None,
-                               norm_layer=norm_layer)
+                               norm_layer=norm_layer,
+                               keep_shape=False)
 
             self.layers.append(layer)
+        # norm = ConvLayerNorm
+        norm = nn.BatchNorm2d
+        # k_s = 96 // patch_embedding_size[0] // 2 ** (len(depths) - 1) - 4
+        k_s = 96 // patch_embedding_size[0]
+        for x in range(len(depths)):
+            k_s -= (window_size[x][0] - 1) * depths[x]
+            if x != len(depths) - 1:
+                k_s = k_s // patch_merging_size[0]
+        k_s -= 0
+
         if fully_conv_for_grasp:
             self.avgpool = torch.nn.Identity()
-            self.norm_img = ConvLayerNorm(int(embed_dim * 2 ** (len(depths) - 1)))
+            self.norm_img = norm(int(embed_dim * 2 ** (len(depths) - 1)))
             # self.norm_img = nn.Identity()
-            self.norm_pose = ConvLayerNorm(int(embed_dim * 2 **(len(depths) - 1)))
+            self.norm_pose = norm(int(embed_dim * 2 **(len(depths) - 1)))
+            # self.norm_pose = nn.Identity()
             self.head = nn.Sequential(
                 nn.Conv2d(int(embed_dim * 2 ** (len(depths) - 1)),
                           int(embed_dim * 2 ** (len(depths) - 2)),
                           kernel_size=3, stride=1
                           ),
-                ConvLayerNorm(int(embed_dim * 2 ** (len(depths) - 2))),
+                norm(int(embed_dim * 2 ** (len(depths) - 2))),
                 nn.ReLU(),
                 nn.Conv2d(int(embed_dim * 2 ** (len(depths) - 2)),
                           int(embed_dim * 2 ** (len(depths) - 3)),
                           kernel_size=3, stride=1
                           ),
-                ConvLayerNorm(int(embed_dim * 2 ** (len(depths) - 3))),
+                norm(int(embed_dim * 2 ** (len(depths) - 3))),
                 nn.ReLU(),
                 nn.Conv2d(int(embed_dim * 2 ** (len(depths) - 3)),
                           num_classes,
-                          kernel_size=96 // patch_embedding_size[0] // 2 ** (len(depths) - 1) - 4, stride=1
+                          kernel_size=k_s, stride=1
                           ),
             )
             if self.dynamic:
@@ -380,19 +403,21 @@ class convTransformer(nn.Module):
                               int(embed_dim * 2 ** (len(depths) - 2)),
                               kernel_size=3, stride=1
                               ),
-                    ConvLayerNorm(int(embed_dim * 2 ** (len(depths) - 2))),
+                    norm(int(embed_dim * 2 ** (len(depths) - 2))),
                     nn.ReLU(),
                     nn.Conv2d(int(embed_dim * 2 ** (len(depths) - 2)),
                               int(embed_dim * 2 ** (len(depths) - 3)),
                               kernel_size=3, stride=1
                               ),
-                    ConvLayerNorm(int(embed_dim * 2 ** (len(depths) - 3))),
+                    norm(int(embed_dim * 2 ** (len(depths) - 3))),
                     nn.ReLU(),
                     nn.Conv2d(int(embed_dim * 2 ** (len(depths) - 3)),
                               2,
-                              kernel_size=96 // patch_embedding_size[0] // 2 ** (len(depths) - 1) - 4, stride=1
+                              kernel_size=k_s, stride=1
                               ),
                 )
+            else:
+                self.head_pos = nn.Identity()
 
         else:
             self.avgpool = nn.AdaptiveAvgPool1d(1)
@@ -421,13 +446,14 @@ class convTransformer(nn.Module):
         for layer in self.layers:
             img = layer(img)
         img = self.norm_img(img)
-
-        pos_bias = self.head_pos(img) if self.dynamic else None
+        
+        pos_bias = self.head_pos(img)
+        # pos_bias = self.head_pos(img) if self.dynamic else None
 
         if img.shape[0] == 1:
-            img = img.repeat(pose.shape[0], 1, 1, 1)
+            img = img.repeat(pose.shape[0], 1, 1, 1).clone()
         pose = self.norm_pose(pose.squeeze().view(pose.shape[0], 1, 1, 1).expand_as(img))
-        img -= pose
+        img = img - pose
         if not testing:
             if shape is not None:
                 img = resize(img, list(shape))

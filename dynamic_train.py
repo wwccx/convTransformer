@@ -278,6 +278,8 @@ class gqTrain:
         for i in range(self.currentEpoch, epoch):
             p = self.make_progress('train')
             with p as x:
+
+                # with torch.autograd.set_detect_anomaly(True):
                 self.train(p=x)
                 # pass
             if i % 1 == 0:

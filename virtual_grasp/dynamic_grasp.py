@@ -1,3 +1,5 @@
+import sys
+sys.path.append("/home/server/convTransformer/")
 from virtual_grasp.environment import VirtualEnvironment
 import time
 import torch
@@ -58,7 +60,7 @@ class DynamicEnv(VirtualEnvironment):
         self.scale = []
         urdf, s, z = self.generate_urdf(self.objects[0])
         self.obj_idx.append(self.p.loadURDF(urdf, basePosition=[0., 0 * self.d, 0.3],
-                                            baseOrientation=self.ori_init,
+        baseOrientation=self.ori_init,
                                             globalScaling=s))
         self.z_pos.append(z)
         self.scale.append(s)
@@ -195,26 +197,26 @@ class DynamicGrasp():
         self.prediction_model.to('cuda')
         self._env = DynamicEnv(num_robots=1)
 
-    def main_action(self, v=-0.02):
+    def main_action(self, time_interval=0.1, **kwargs):
         img_tensor = torch.ones(1, 6, 480, 480).cuda()
-        self.set_obj_movement(y=v)
+        self.set_obj_movement(**kwargs)
         for i in range(6):
             color_image, depth_image, position_end, ori_end = self._env.update_camera()
             time_step = time.time()
             # depth_image = np.ones((480, 480)) * 0.7
-            # depth_image[200:300, 370:400] = 0.4
+            # depth_image[200:300, 370:400] = 0.65
             depth_tensor = torch.from_numpy(depth_image).unsqueeze(0).unsqueeze(0).cuda()
             img_tensor[:, i, :, :] = depth_tensor
-            time.sleep(0.2)
+            time.sleep(time_interval)
 
         while position_end[2] > 0.25:
-            while time.time() - time_step < 0.2:
+            while time.time() - time_step < time_interval:
                 pass
             try:
                 _, depth_image, position_end, ori_end = self._env.update_camera()
                 time_step = time.time()
                 # depth_image = np.ones((480, 480)) * 0.7
-                # depth_image[200:300, 370:400] = 0.4
+                # depth_image[200:300, 370:400] = 0.65
                 depth_image = self.img_transform(depth_image, position_end, ori_end)
                 depth_tensor = torch.from_numpy(depth_image).unsqueeze(0).unsqueeze(0).cuda()
                 img_tensor[:, 0:5, :, :] = img_tensor[:, 1:6, :, :].clone()
@@ -235,12 +237,12 @@ class DynamicGrasp():
                     else:
                         x = img[0, i, :, :]
                     plt.imshow(x)
-                # self.set_obj_movement()
-                # plt.show()
-                # self.set_obj_movement(y=v)
+                self.set_obj_movement()
+                plt.show()
+                self.set_obj_movement(**kwargs)
 
                 # pos[2] = self._env.init_end_pos[2]
-                self.move((quat, pos + [0, 0, 0.05]), jaw=1)
+                # self.move((quat, pos + [0, 0, 0.05]), jaw=1)
             except KeyboardInterrupt:
                 break
         # self.set_obj_movement()
@@ -331,8 +333,10 @@ class DynamicGrasp():
         depth_reso = 1e-2
         z_pose_init = torch.arange(depth_bin).cuda() * depth_reso + torch.min(img_tensor)
 
-        img_tensor = (img_tensor - torch.mean(img_tensor)) / torch.std(img_tensor)
-        z_pose = (z_pose_init - torch.mean(img_tensor)) / torch.std(img_tensor)
+        # img_tensor = (img_tensor - torch.mean(img_tensor)) / torch.std(img_tensor)
+        # z_pose = (z_pose_init - torch.mean(img_tensor)) / torch.std(img_tensor)
+        img_tensor = (img_tensor - torch.min(img_tensor)) / (torch.max(img_tensor) - torch.min(img_tensor)) - 0.5
+        z_pose = (z_pose_init - torch.min(img_tensor)) / (torch.max(img_tensor) - torch.min(img_tensor)) - 0.5
         if self.prediction_model.dynamic:
             res, pos = self.prediction_model(img_tensor, z_pose)
         else:
@@ -346,10 +350,10 @@ class DynamicGrasp():
 
         index = self.get_tensor_idx(res.shape, torch.argmax(res).detach().cpu().item())  # depth, angle, y, x
         print(index, "quality:", res[index[0], index[1], index[2], index[3]].item())
-        print('velocity:', pos[index[0], :, index[2], index[3]].detach().cpu().numpy())
+        print('velocity:', pos[0, :, index[2], index[3]].detach().cpu().numpy())
         x = index[3] * 8 + 48
         y = index[2] * 8 + 48
-        velocity = np.round(-250 * pos[index[0], :, index[2], index[3]].detach().cpu().numpy()).astype(np.int32)
+        velocity = np.round(-100 * pos[0, :, index[2], index[3]].detach().cpu().numpy()).astype(np.int32)
         quatObj2Base, posObj2Base = self._env.pixel2base((x + velocity[0], y + velocity[0]), index[1]*np.pi/16, None,
                                                          z_pose[index[0]].detach().cpu().item(), 80, 80)
         return quatObj2Base, posObj2Base, (x, y, index[1], z_pose_init[index[0]].item(),
@@ -379,10 +383,20 @@ if __name__ == '__main__':
     # model_path = './train/convTrans23_02_20_22_53_dynamic'
     # model_path = './train/convTrans23_02_21_17_25_dynamic_attcg'
     model_path = './train/convTrans23_02_21_18_52_dynamic_attcg_removebn'
+    # model_path = './train/convTrans23_03_08_11_34_dynamic_adamw'
+    model_path = './train/convTrans23_03_09_19_35_dynamic_dim192_allBN'
+    model_path = './train/convTrans23_03_13_17_04_dynamic_attcg_win3_Rlossweight10'
+    model_path = './train/convTrans23_03_13_23_23_dynamic_adamw_win3_Rlossweight10'
+    # model_path = './train/convTrans23_03_14_14_44_dynamic_adamw_win3_Rlossweight10_postanh'
+    model_path = './train/convTrans22_08_04_23_18_pos_branch_6slices_dynamic_curbest'
+    model_path = './train/convTrans23_03_14_18_33_dynamic_adamw_win3_depth26_LN'
+    model_path = './train/convTrans23_03_16_18_02_dynamic_win73_depth26_nopad'  # epoch 5
+    model_path = './train/convTrans23_03_17_00_24_dynamic_adamw_win33_depth22_L2loss_nopad'
+    model_path = './train/convTrans23_03_17_13_25_dynamic_win33_depth22_attcg_L2loss_fixedLr_decay005'
     dynamic_grasp = DynamicGrasp(model_path)
     # d = VirtualEnvironment(1)
     # d.calibrate_camera()
     # dynamic_grasp.test_img_transform()
     while 1:
-        dynamic_grasp.main_action()
+        dynamic_grasp.main_action(time_interval=0.2, y=0.02, x=0.0)
 

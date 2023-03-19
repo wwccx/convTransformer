@@ -79,6 +79,12 @@ def pos_quat2mat(pos, quat):
 
     return mat
 
+def pos_ori2mat(pos, ori):
+    mat = np.eye(4)
+    mat[0:3, 0:3] = ori
+    mat[0:3, 3] = pos
+    return mat
+
 def rpy2quat(rpy):
     return np.array(tftrans.quaternion_from_euler(*rpy))
 

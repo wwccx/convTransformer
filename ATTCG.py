@@ -7,7 +7,7 @@
 import math
 import torch
 from torch.optim.optimizer import Optimizer
-
+from torch.optim import AdamW
 
 class ATTCG(Optimizer):
 
@@ -35,8 +35,8 @@ class ATTCG(Optimizer):
                 if grad.is_sparse:
                     raise RuntimeError('ATTCG does not support sparse gradients')
                 state = self.state[p]
-                if self.state['weight_decay'] > 0:
-                    grad = grad.add(p, alpha=self.state['weight_decay'])
+                if group['weight_decay'] > 0:
+                    grad = grad.add(p, alpha=group['weight_decay'])
 
                 # State initialization
                 if len(state) == 0:
