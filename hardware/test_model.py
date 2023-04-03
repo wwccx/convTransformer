@@ -99,12 +99,12 @@ class PredictModel():
         y1 = int(y + r * np.sin(angle))
         y2 = int(y + r * np.sin(angle + np.pi))
 
-        img = cv2.arrowedLine(img, (x, y), (x1, y1), depth+0.2, thickness=2)
-        img = cv2.arrowedLine(img, (x, y), (x2, y2), depth+0.2, thickness=2)
+        img = cv2.arrowedLine(img, (x, y), (x1, y1), depth, thickness=2)
+        img = cv2.arrowedLine(img, (x, y), (x2, y2), depth, thickness=2)
 
         if velocity is not None:
             dx, dy = map(int, velocity)
-            img = cv2.arrowedLine(img, (x, y), (x + dx, y + dy), depth + 0.2, thickness=4)
+            img = cv2.arrowedLine(img, (x, y), (x + dx, y + dy), depth, thickness=4)
         return img
 
     def action(self):
@@ -132,28 +132,19 @@ if __name__ == '__main__':
 
     # model_path = './train/convTrans23_03_08_02_01_dynamic_attcg'
 
-    model_path = './train/convTrans23_03_09_19_35_dynamic_dim192_allBN'
-    # model_path = './train/convTrans23_03_10_15_22_dynamic_dim192_allBN_300epoch'
-    model_path = './train/convTrans23_03_12_19_47_dynamic_attcg_allBN_win3'
-    # model_path = './train/convTrans23_03_13_14_06_dynamic_attcg_allBN_win3_amp0'
-    # model_path = './train/convTrans23_03_12_23_33_dynamic_adamw_win3'
-    model_path = './train/convTrans23_03_13_17_04_dynamic_attcg_win3_Rlossweight10'
-    model_path = './train/convTrans23_03_13_23_23_dynamic_adamw_win3_Rlossweight10'  # 22, 32
-    # model_path = './train/convTrans23_03_14_14_44_dynamic_adamw_win3_Rlossweight10_postanh'
-    model_path = './train/convTrans23_03_14_16_49_dynamic_adamw_win5_Rlossweight10_posonly'
-    # model_path = './train/convTrans22_08_04_23_18_pos_branch_6slices_dynamic_curbest'
-    model_path = './train/convTrans23_03_14_18_33_dynamic_adamw_win3_depth26_LN'
-    # model_path = './train/convTrans23_03_14_21_13_dynamic_win73_depth26_LN'
-    model_path = './train/convTrans23_03_15_17_56_dynamic_adamw_win73_depth26_L2loss'  # epoch 10
     model_path = './train/convTrans23_03_16_18_02_dynamic_win73_depth26_nopad'  # epoch 5
-    model_path = './train/convTrans23_03_17_00_24_dynamic_adamw_win33_depth22_L2loss_nopad'
-    # model_path = './train/convTrans23_03_17_03_09_dynamic_adamw_win73_depth22_attcg_L2loss'
     model_path = './train/convTrans23_03_17_13_25_dynamic_win33_depth22_attcg_L2loss_fixedLr_decay005'
-    # model_path = './train/convTrans23_03_18_11_53_dynamic_win33_depth22_adamw_L2loss_decay005'
-    # amp 01 yes, patch size 8 yes, BN layer yes
+    
+    model_path = './train/res23_03_31_00_26_dynamic_gqcnn/'  # resnet backbone
+    # model_path = './train/convTrans23_03_31_21_04_dynamic_win3_depth22_nopad_decay005'   # AdamW fixed lr
+    # model_path = './train/convTrans23_03_21_16_02_dynamic_win33_depth222_attcg_L1loss_decay005_fixedLr'
+   
+    model_path = './train/convTrans23_04_02_20_28_dynamic_depth26_attcg_pad'  # 26 depth with pad
+
     # static
     # model_path = './train/convTrans22_07_29_20_53_batchnorm_patch8_win5'
     m = PredictModel(model_path, k=-1)
+    summary(m.prediction_model, (6, 96, 96))
     x = torch.rand(1, 6, 96+8*8, 96+8*8).cuda()
     print(m.prediction_model(x)[0][..., 2, 2])
     print(m.prediction_model(x[..., 8*2:8*2+96, 8*2:8*2+96])[0].squeeze())

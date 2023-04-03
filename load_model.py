@@ -27,10 +27,10 @@ def build_model(config):
             dynamic=config.MODEL.DYNAMIC,
         )
     elif config.MODEL.ARCH == 'res':
-        model = ResNet([2, 2, 2, 2], inChannel=config.MODEL.IN_CHANNELS)
+        model = ResNet([2, 2, 2, 2], inChannel=config.MODEL.IN_CHANNELS, dynamic=config.MODEL.DYNAMIC)
     
     elif config.MODEL.ARCH == 'gqcnn':
-        model = GQCNN()
+        model = GQCNN(inChannel=config.MODEL.IN_CHANNELS, dynamic=config.MODEL.DYNAMIC)
 
     else:
         raise NotImplementedError(f"Unkown model: {config.MODEL.ARCH}")

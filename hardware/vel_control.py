@@ -51,7 +51,7 @@ class VelController(Thread):
         time_step = 1e-2
         self.rate = rospy.Rate(1000 * time_step)
         self.queue = queue
-        pos = np.array([0.07, 0.45, 0.45])
+        pos = np.array([0.0, 0.45, 0.45])
         ori = np.array([[ 0.99807688,  0.06030169, -0.01436103],
                         [ 0.05825503, -0.9916341,  -0.11518751],
                         [-0.02118689,  0.11412939, -0.99323995]])
@@ -204,12 +204,15 @@ class VelController(Thread):
 
         self.target_pose_publisher.publish(Float64MultiArray(data=vel_joints))
 
-    def end_joint_rotation(self):
+    def _end_joint_rotation(self):
         self.target_pose_publisher.publish(Float64MultiArray(data=np.zeros(6)))
+
+    def end_listen(self):
+        self.queue.put(None)
 
     def suspend(self):
         self._suspend = True
-        self.end_joint_rotation()
+        self._end_joint_rotation()
 
     def continue_listen(self):
         self._suspend = False
@@ -223,7 +226,7 @@ class VelController(Thread):
                 # print('try to get aim pose')
                 aim_pose = self.queue.get(False)
                 if aim_pose is None:
-                    self.end_joint_rotation()
+                    self._end_joint_rotation()
                     break
                 self.aim_pose = aim_pose
                 self.reach_target = False
@@ -238,7 +241,7 @@ class VelController(Thread):
                 epos = np.linalg.norm(self.aim_pose[0] - current_tool_pos, 2) ** 0.5
                 eori = np.linalg.norm(current_tool_ori - self.aim_pose[1], 2) ** 0.5
                 if epos < 1e-2 and eori < 2e-2:
-                    self.end_joint_rotation()
+                    self._end_joint_rotation()
                     self.reach_target = True
                 else:
                     # print(epos, eori)

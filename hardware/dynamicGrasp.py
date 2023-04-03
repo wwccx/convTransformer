@@ -15,15 +15,19 @@ from threading import Thread
 import time
 from matplotlib import pyplot as plt
 
+
 class RealEnvironment():
     def __init__(self) -> None:
         # self.camera = RS(1280, 720)
         self.camera = RS(640, 480)
         self.gripper = Gripper()
+        self.gripper.gripper_initial()
+
         self.pose_queue = Queue()
         self.robot = VelController(self.pose_queue)
         self.robot.setDaemon(True)
         self.robot.start()
+        self.move_joints(*self.robot.aim_pose_init, jaw=1, block=True)
         # self.robot.join()
         self.camera_intrinsics = np.array([[614.887, 0.0, 328.328], [0.0, 614.995, 236.137], [0.0, 0.0, 1.0]])
 
@@ -42,9 +46,9 @@ class RealEnvironment():
         pos, ori = self.robot.get_current_tool_pose()  # x y z, rotMat \in \mathbb{R}^{3 \times 3}
         depth = u.in_paint(depth)
         depth /= 1000
-        plt.figure(3)
-        plt.imshow(depth)
-        depth = np.clip(depth, 0.48, float('inf'))
+        # plt.figure(3)
+        # plt.imshow(depth)
+        # depth = np.clip(depth, 0.48, float('inf'))
 
         return rgb, depth, pos, ori
 
@@ -68,7 +72,7 @@ class RealEnvironment():
         # print(pos)
         pos[2] = max(0.033, pos[2])
         self.pose_queue.put((pos, ori))
-        if jaw:
+        if jaw is not None:
             self.gripper.gripper_position(int(100*jaw))
         if block:
             while not self.robot.reach_target:
@@ -84,7 +88,7 @@ class RealEnvironment():
         xp = max(0, min(xp, 639 - dx * 2))
         yp = max(0, min(yp, 479 - dy * 2))
         
-        z = depth - 0.05
+        z = depth
         # print('z:', z)
         # Pobj2cam = np.dot(np.linalg.inv(self.cameraMat), [[xp+dx], [yp+dy], [1]]) * z  # meter
         xpc, ypc, zpc = np.linalg.inv(self.camera_intrinsics) @ np.array([xp, yp, 1]) * z  # pc: pos in cam
@@ -133,6 +137,9 @@ class DynamicGrasp:
         self.prediction_model.to('cuda')
     
         self._env = RealEnvironment()
+        self.img_tensor = torch.ones(1, 6, 480, 640).cuda()
+        self.robot_pos = self._env.init_end_pos
+        self.img_time = time.time()
 
     def img_transform(self, img, position_end, ori_end, color=None):
         Tend = u.pos_ori2mat(position_end, ori_end)
@@ -175,22 +182,33 @@ class DynamicGrasp:
         else:
             color = cv2.warpPerspective(color, MP, img.shape[::-1], borderMode=cv2.BORDER_REPLICATE)
             return img, color
+    
+    def update_tensor(self):
+        color_image, depth_image, position_end, ori_end = self._env.update_camera()
+        self.img_time = time.time()
+        depth_image = self.img_transform(depth_image, position_end, ori_end)
+        depth_image = np.clip(depth_image, 0.48, 0.57)
+        depth_tensor = torch.from_numpy(depth_image).unsqueeze(0).unsqueeze(0).cuda()
+        self.robot_pos = position_end
+        self.img_tensor[:, 0:5, :, :] = self.img_tensor[:, 1:6, :, :].clone()
+        self.img_tensor[:, 5, :, :] = depth_tensor
 
-    @torch.no_grad()
-    def prediction(self, img_tensor, depth_bin=8):
-        # depth_reso = (torch.max(img_tensor) - torch.min(img_tensor)) / depth_bin
-        depth_reso = 1e-2
-        z_pose_init = -torch.arange(depth_bin).cuda() * depth_reso + torch.max(img_tensor)
-        print(torch.min(img_tensor))
-
-        # img_tensor = (img_tensor - torch.mean(img_tensor)) / torch.std(img_tensor)
-        # z_pose = (z_pose_init - torch.mean(img_tensor)) / torch.std(img_tensor)
+    def normalize_tensor(self, depth_bin=8, depth_reso=1e-2):
+        img_tensor = self.img_tensor
+        z_pose_init = torch.arange(depth_bin).cuda() * depth_reso + torch.min(img_tensor)
         img_tensor = (img_tensor - torch.min(img_tensor)) / (torch.max(img_tensor) - torch.min(img_tensor)) - 0.5
         z_pose = (z_pose_init - torch.min(img_tensor)) / (torch.max(img_tensor) - torch.min(img_tensor)) - 0.5
+        
+        return img_tensor, z_pose, z_pose_init
+
+    @torch.no_grad()
+    def prediction(self):
+        img_tensor, z_pose, z_pose_init = self.normalize_tensor()
+
         if self.prediction_model.dynamic:
             res, pos = self.prediction_model(img_tensor, z_pose)
         else:
-            res = self.prediction_model(img_tensor, z_pose)
+            res = self.prediction_model(img_tensor[:, 3:4, ...], z_pose)
             pos = torch.zeros_like(res)[:, :2, ...]
         s = list(res.shape)
         s[1:2] = [16, 2]
@@ -206,7 +224,7 @@ class DynamicGrasp:
         angle = index[1] * np.pi / 16
         if angle > np.pi / 2:
             angle -= np.pi
-        velocity = np.round(-0 * pos[0, :, index[2], index[3]].detach().cpu().numpy()).astype(np.int32)
+        velocity = np.round(-96 * pos[0, :, index[2], index[3]].detach().cpu().numpy()).astype(np.int32)
         pos, ori = self._env.pixel2base((x + velocity[0], y + velocity[0]), angle,
                                                          z_pose[index[0]].detach().cpu().item(),)
         return pos, ori, (x, y, index[1], z_pose_init[index[0]].item(), velocity)
@@ -241,56 +259,31 @@ class DynamicGrasp:
             time.sleep(3)
         self._env.pose_queue.put(None)
         return
-        # while 1:
-        #     color_image, depth_image, position_end, ori_end = self._env.update_camera()
-        #     plt.figure(1)
-        #     plt.imshow(depth_image)
-        #     depth_image, color_image = self.img_transform(depth_image, position_end, ori_end, color_image)
-        #     plt.figure(2)
-        #     plt.imshow(depth_image)
-        #     # cv2.imshow('depth', depth_image * 100)
-        #     # cv2.waitKey(2)
-        #     plt.show()
 
-    def main_action(self, v=-0.02):
-        img_tensor = torch.ones(1, 6, 480, 640).cuda()
+    def main_action(self, step=0.3):
+
         for i in range(6):
-            color_image, depth_image, position_end, ori_end = self._env.update_camera()
-            depth_image = self.img_transform(depth_image, position_end, ori_end)
-            # depth_image = np.clip(depth_image, 0.48, 0.57)
-            time_step = time.time()
-            # depth_image = np.ones((480, 480)) * 0.7
-            # depth_image[200:300, 370:400] = 0.4
-            depth_tensor = torch.from_numpy(depth_image).unsqueeze(0).unsqueeze(0).cuda()
-            img_tensor[:, i, :, :] = depth_tensor
-            time.sleep(0.2)
-
-        while position_end[2] > 0.10:
-            while time.time() - time_step < 0.2:
+            self.update_tensor()
+            while time.time() - self.img_time < step:
+                pass
+        final_pos, final_ori = self._env.init_end_pos, self._env.init_end_ori
+        k = 1
+        while self.robot_pos[2] > 0.25:
+            while time.time() - self.img_time < step:
                 pass
             try:
-                _, depth_image, position_end, ori_end = self._env.update_camera()
-                time_step = time.time()
-                # depth_image = np.ones((480, 480)) * 0.7
-                # depth_image[200:300, 370:400] = 0.4
-                depth_image = self.img_transform(depth_image, position_end, ori_end)
-                # depth_image = np.clip(depth_image, 0.48, 0.57)
-                depth_tensor = torch.from_numpy(depth_image).unsqueeze(0).unsqueeze(0).cuda()
-                img_tensor[:, 0:5, :, :] = img_tensor[:, 1:6, :, :].clone()
-                img_tensor[:, 5, :, :] = depth_tensor
-                if self.prediction_model.dynamic:
-                    pos, ori, index = self.prediction(img_tensor)
-                else:
-                    pos, ori, index = self.prediction(img_tensor[:, 0:1, :, :])
+                self.update_tensor()
+                pos, ori, index = self.prediction()
+                final_pos, final_ori = pos, ori
                 print('quat:\n', ori, '\n', 'pos:\n', pos)
-                print(index)
-                angle = index[1] * np.pi / 16
-                if angle > np.pi / 2:
-                    angle -= np.pi
-                pos_bias_better_campos = np.array([0.12*np.sin(angle), -0.12*np.cos(angle), 0.05])
-                img = img_tensor.cpu().numpy()
+                angle = -index[2] * np.pi / 16
+                if angle < -np.pi / 2:
+                    angle += np.pi
+                pos_bias_better_campos = np.array([0.12*np.sin(angle), -0.12*np.cos(angle), 0.0])
+                print('bias:', pos_bias_better_campos, angle/np.pi * 180)
+                img = self.img_tensor.cpu().numpy()
                 for i in range(6):
-                    plt.figure(1)
+                    plt.figure(k)
                     plt.subplot(2, 3, i + 1)
                     velocity = index[4] if self.prediction_model.dynamic else None
                     if i == 3:
@@ -300,133 +293,29 @@ class DynamicGrasp:
                     else:
                         x = img[0, i, :, :]
                     plt.imshow(x)
-                self._env.robot.suspend()
-                plt.show()
-                self._env.robot.continue_listen()
-                # self._env.robot.start()
-                # self._env.robot.end_joint_rotation()
+                k += 1
+                print('campos:', pos + pos_bias_better_campos)
+                # self._env.robot.suspend()
+                # plt.show()
+                # self._env.robot.continue_listen()
+
                 self._env.move_joints(pos + pos_bias_better_campos, ori, jaw=0.8)
             except KeyboardInterrupt:
                 break
             # finally:
             #     break
+        # plt.show()
+        final_pos -= [0, 0, 0.10]
+        self._env.move_joints(final_pos + [0, 0, 0.10], final_ori, jaw=0.8)
+        time.sleep(0.5)
+        self._env.move_joints(final_pos, final_ori, jaw=0.8)
+        time.sleep(0.5)
+        self._env.move_joints(final_pos, final_ori, jaw=0)
+        time.sleep(0.5)
+        self._env.move_joints(final_pos + [0, 0, 0.25], final_ori)
+        time.sleep(0.5)
 
-        self._env.move_joints(pos + [0, 0, 0.05], ori, jaw=0.8)
-        time.sleep(2)
-        self._env.move_joints(pos, ori, jaw=0.8)
-        time.sleep(2)
-        self._env.move_joints(pos, ori, jaw=0)
-        time.sleep(1)
-        self._env.move_joints(pos + [0, 0, 0.25], ori)
-        time.sleep(3)
-
-        # self._env.move_joints(*self._env.robot.aim_pose_init)
-
-
-# class DynamicGrasp:
-#     def __init__(self, model_ptr) -> None:
-#         self.controller = VelController()
-#         self.camera = RS(640, 480)
-#         self.gripper = Gripper()
-#         self.net = None
-#         self.net_config = None
-#         self._load_model(model_ptr)
-#         self.init_pos, self.init_quat = self.controller.get_current_pose()
-#         self.init_tmat = u.pos_quat2mat(self.init_pos, self.init_quat)
-#         self.queue_size = 10
-#         self.img_tensor = torch.zeros((self.queue_size, 480, 640)).cuda()
-#         self.start = 0
-#         self.end = self.net_config['time_slices'] + self.start
-#         self._init_img_tensor()
-#         self.corner_points = np.array([[1, 1, 1], [1, 478, 1], [638, 1, 1], [638, 478, 1]])
-#
-#     def _load_model(self, model_ptr):
-#         ckps = os.listdir(model_ptr)
-#         ckps = [os.path.join(model_ptr, c) for c in ckps if c.endswith('.pth')]
-#         ckps.sort(key=os.path.getmtime)
-#
-#         config = torch.load(ckps[0])['config']
-#         print(config)
-#         self.net = build_model(config).cuda()
-#         latest_ckp = ckps[-1]
-#
-#         save_data = torch.load(latest_ckp)
-#         print(f"Epoch:{save_data['epoch']}")
-#         self.net.load_state_dict(save_data['model'])
-#         self.net.eval()
-#         self.net_config = config
-#
-#     def _init_img_tensor(self):
-#         d, c = self.camera.get_img()
-#         d = u.in_paint(d)
-#         d = torch.from_numpy(d).cuda().unsqueeze(0).repeat((self.end-self.start, 1, 1))
-#         self.img_tensor[self.start:self.end] = d
-#
-#     def warp_perspective(self, img):
-#
-#         pos, quat = self.controller.get_current_pose()
-#         mat = u.pos_quat2mat(pos, quat)
-#         points = np.linalg.inv(self.camera.intr) @ self.corner_points.T
-#         points = points * img[self.corner_points[:, 1], self.corner_points[:, 0]]
-#
-#         point_4d = np.ones(4, 4)
-#         point_4d[0:3, :] = points
-#
-#         point_init_frame = np.linalg.inv(self.init_tmat).dot(mat).dot(point_4d)
-#         point_init_frame = point_init_frame / point_init_frame[2, :]
-#         point_init_frame = self.camera.intr @ point_init_frame[0:3, :]
-#         perspective_mat, _ = cv2.findHomograph(self.corner_points[:, :2], point_init_frame[:, :2])
-#         perspective_img = cv2.warpPerspective(img, perspective_mat, (img.shape[1], img.shape[0]))
-#
-#         return u.inpaint(perspective_img)
-#
-#     def get_img_slice(self):
-#         if self.end > self.start:
-#             return self.img_tensor[self.start:self.end]
-#         else:
-#             return torch.stack(
-#                     (self.img_tensor[self.start:], self.img_tensor[:self.end]), dim=0
-#                     )
-#
-#     def update_img_tensor(self):
-#         d, c = self.camera.get_img()
-#         d = u.in_paint(d)
-#         d = self.warp_perspective(d)
-#         self.start = (self.start + 1) % self.queue_size
-#         self.end = (self.end + 1) % self.queue_size
-#         d = torch.from_numpy(d).unsqueeze(0).cuda()
-#         self.img_tensor[self.end] = d
-#
-#
-#     def grasp_predict(self, depth_reso=5e-3, depth_bin=8):
-#         self.update_img_tensor()
-#         input_img = self.get_img_slice().unsqueeze(0)
-#         z_pose = torch.arange(depth_bin).cuda() * depth_reso + torch.min(input_img)
-#         res, pos = self.net(input_img, z_pose)
-#         s = list(res.shape)
-#         s[1:2] = [16, 2]
-#         sf = torch.nn.Softmax(dim=2)
-#         res = sf(res)[:, :, 1, ...]
-#         s[2:3] = []
-#
-#         index = self.get_tensor_idx(res.shape, torch.argmax(res).detach().cpu().item())  # depth, angle, y, x
-#
-#         position = self.pixel2cam(index[2], index[3], index[0])
-#
-#         #TODO: add the pos prediction to the position
-#         return position, index[1]
-#
-#     @staticmethod
-#     def get_tensor_idx(shape, arg_max):
-#         idx = []
-#         for i in shape[::-1]:
-#             idx.append(arg_max % i)
-#             arg_max = arg_max // i
-#         return idx[::-1]
-#
-#     @staticmethod
-#     def pixel2cam(y, x, depth):
-#         pass
+        self._env.move_joints(*self._env.robot.aim_pose_init, jaw=1)
 
 
 if __name__ == '__main__':
@@ -436,6 +325,8 @@ if __name__ == '__main__':
     # model_path = './train/convTrans23_02_21_18_52_dynamic_attcg_removebn'
     # model_path = './train/convTrans23_03_12_19_47_dynamic_attcg_allBN_win3'
     model_path = './train/convTrans23_03_17_13_25_dynamic_win33_depth22_attcg_L2loss_fixedLr_decay005'
+    # model_path = './train/convTrans23_03_17_11_56_dynamic_win33_depth22_attcg_L2loss_fixedLr'
+    # model_path = './train/convTrans23_03_18_23_38_dynamic_win3_depth24_nopad_decay005'
     # model_path =  './train/convTrans23_02_11_18_11_attcg-grasp'
     dynamic_grasp = DynamicGrasp(model_path)
     # time.sleep(5)
@@ -444,4 +335,5 @@ if __name__ == '__main__':
 
     # dynamic_grasp._env.move_joints(pos, ori)
     time.sleep(5)
-    dynamic_grasp._env.robot.end_joint_rotation()
+    # dynamic_grasp._env.move_joints(*dynamic_grasp._env.robot.aim_pose_init)
+    dynamic_grasp._env.robot.end_listen()

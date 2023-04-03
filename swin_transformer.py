@@ -622,14 +622,30 @@ class SwinTransformer(nn.Module):
 if __name__ == '__main__':
     from torchsummary import summary
     import time
-    st = SwinTransformer(img_size=224, in_chans=3, num_classes=10).cuda()
+    from convTrans import convTransformer
+    st = SwinTransformer(img_size=224, in_chans=3, num_classes=1000).cuda()
     summary(st, (3, 224, 224), batch_size=8)
-    '''
-    a = torch.rand((75*75, 1, 96, 96)).cuda()
-    t = time.time()
-
-    with torch.no_grad():
+    
+    a = torch.rand((1, 3, 224, 224)).cuda()
+    for i in range(10):
         st(a)
+    st.eval()
+    with torch.no_grad():
+        t = time.time()
+        st(a)
+        torch.cuda.synchronize()
         t1 = time.time()
-        print(f'{t1-t}')
-    '''
+        print(f'swin time:{t1-t}')
+
+    st = convTransformer(num_classes=1000).cuda()
+    st.eval()
+    summary(st, (3, 224, 224), batch_size=8)
+    for i in range(10):
+        st(a)
+    with torch.no_grad():
+        t = time.time()
+        st(a)
+        torch.cuda.synchronize()
+        t1 = time.time()
+        print(f'conv time:{t1-t}')
+    

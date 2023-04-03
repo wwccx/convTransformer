@@ -360,7 +360,7 @@ class convTransformer(nn.Module):
                                downsample=PatchMerging(embed_dim * 2 ** i, patch_merging_size=patch_merging_size)
                                if i + 1 < len(depths) else None,
                                norm_layer=norm_layer,
-                               keep_shape=False)
+                               keep_shape=True)
 
             self.layers.append(layer)
         # norm = ConvLayerNorm
@@ -368,10 +368,10 @@ class convTransformer(nn.Module):
         # k_s = 96 // patch_embedding_size[0] // 2 ** (len(depths) - 1) - 4
         k_s = 96 // patch_embedding_size[0]
         for x in range(len(depths)):
-            k_s -= (window_size[x][0] - 1) * depths[x]
+            # k_s -= (window_size[x][0] - 1) * depths[x]
             if x != len(depths) - 1:
                 k_s = k_s // patch_merging_size[0]
-        k_s -= 0
+        k_s -= 4
 
         if fully_conv_for_grasp:
             self.avgpool = torch.nn.Identity()
@@ -482,7 +482,7 @@ if __name__ == '__main__':
 
     net = convTransformer(in_chans=1, num_classes=32, embed_dim=96, depths=(2, 6), num_heads=(3, 12),
                           patch_embedding_size=(4, 4), fully_conv_for_grasp=True).cuda()
-    # summary(net, (1, 96, 96))
+    # summary(net, (6, 96, 96))
     net.load_state_dict(torch.load('./train/vfinetuneconvTrans22_06_23_22_26/convTransgrasp0926state_epoch18_acc0.2717.pth')['model'])
     net.eval()
     a = torch.zeros((1, 1, 96, 96)).cuda()

@@ -194,14 +194,14 @@ class DynamicGraspLossFunction(torch.nn.Module):
             self.classify_loss_function = torch.nn.CrossEntropyLoss(weight=torch.tensor(config.DATA.LOSS_WEIGHT).cuda())
         else:
             self.classify_loss_function = SoftTargetCrossEntropy()
-        # self.regress_loss_function = torch.nn.L1Loss()
-        self.regress_loss_function = torch.nn.MSELoss()
+        self.regress_loss_function = torch.nn.L1Loss()
+        # self.regress_loss_function = torch.nn.MSELoss()
 
     def forward(self, classification, position, target, mask, target_pos):
         classification = classification.squeeze()
         position = position.squeeze()
         valid_input = classification[torch.where(mask > 0)].view(-1, 2)
-        return self.classify_loss_function(valid_input, target) + self.regress_loss_function(position, target_pos)
+        return self.classify_loss_function(valid_input, target) + 5 * self.regress_loss_function(position, target_pos)
 
 
 class TrajectoryGenerator:

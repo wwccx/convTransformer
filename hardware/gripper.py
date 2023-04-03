@@ -6,7 +6,7 @@ import serial
 class Gripper():
     def __init__(self):
         self.ser = serial.Serial("/dev/ttyACM0", 115200)
-        self.gripper_initial()
+        # self.gripper_initial()
 
     def gripper_initial(self):  # 初始化
         self.ser.write('FFFEFDFC 01 0802 0100 00000000 FB'.encode())
@@ -62,8 +62,12 @@ class Gripper():
 if __name__ == '__main__':
     import time
     g = Gripper()
-    g.get_position()
-    print(g.check_grasp())
+    # g.gripper_initial()
+    # time.sleep(4)
+    # print('???')
+    # print(g.get_position())
+    g.gripper_position(100)
+    # print(g.check_grasp())
     # g = Gripper()
     # g.gripper_initial()
     # time.sleep(10)

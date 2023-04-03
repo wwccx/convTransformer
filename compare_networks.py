@@ -82,8 +82,10 @@ class ResNet(nn.Module):
                 nn.Conv2d(128, 64, kernel_size=3, padding=0),
                 nn.BatchNorm2d(64),
                 nn.ReLU(),
-                nn.Conv2d(64, 32, kernel_size=8, padding=0),
+                nn.Conv2d(64, 2, kernel_size=8, padding=0),
             )
+        else:
+            self.out_pos = nn.Identity()
         # kaiming weight normal after default init
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -136,7 +138,7 @@ class ResNet(nn.Module):
         if shape is not None:
             x = resize(x, list(shape))
 
-        pos_bias = self.out_pos(x) if self.dynamic else None
+        pos_bias = self.out_pos(x)
 
         if x.shape[0] == 1:
             x = x.repeat(pose.shape[0], 1, 1, 1)

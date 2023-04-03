@@ -8,24 +8,32 @@ import torch
 '''
 
 class GQCNN(nn.Module):
-    def __init__(self):
+    def __init__(self, inChannel, dynamic):
         super(GQCNN, self).__init__()
+        self.inChannel = inChannel
         self.layers = self.structure()
         # self.lossWeight = torch.ones(32).cuda()
         # self.lossWeight[1::2] = 1200
         self.sf = nn.Softmax(dim=1)
         self.ceLoss = nn.CrossEntropyLoss(weight=torch.tensor([1., 25.]))
+        self.dynamic = dynamic
+        if self.dynamic:
+            self.v_head = nn.Conv2d(32, 2, kernel_size=1, padding=0)
+        self.h_head = nn.Conv2d(32, 32, kernel_size=1, padding=0)
 
     def forward(self, img, pose=None):
         if pose is None: pose = torch.zeros(img.shape[0]).cuda()
 
         img -= pose.squeeze().view(pose.shape[0], 1, 1, 1)
-        return self.layers(img)
-
-    @staticmethod
-    def structure():
+        img = self.layers(img)
+        if self.dynamic:
+            return self.h_head(img), self.v_head(img)
+        else:
+            return self.h_head(img)
+        
+    def structure(self):
         layers = nn.Sequential(
-            nn.Conv2d(1, 32, kernel_size=9, padding=0),
+            nn.Conv2d(self.inChannel, 32, kernel_size=9, padding=0),
             nn.ReLU(inplace=True),
             nn.Conv2d(32, 64, kernel_size=5, padding=0),
             nn.ReLU(inplace=True),
@@ -48,7 +56,7 @@ class GQCNN(nn.Module):
             nn.ReLU(inplace=True),
             nn.Conv2d(64, 32, kernel_size=1, padding=0),
             nn.ReLU(inplace=True),
-            nn.Conv2d(32, 32, kernel_size=1, padding=0),
+            # nn.Conv2d(32, 32, kernel_size=1, padding=0),
             # nn.ReLU(inplace=True),
             # nn.Sigmoid()
         )

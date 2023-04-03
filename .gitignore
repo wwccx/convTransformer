@@ -6,3 +6,7 @@ data/
 __pycache__/
 *.obj
 *.urdf
+*.png
+*.jpg
+*.txt
+.idea/
