@@ -72,6 +72,7 @@ class gqTrain:
         self.acc_value = np.array([])
         self.lr = np.array([])
         self.grad = np.array([])
+        self.rloss = np.array([])
         self.finetune_acc = np.array([])
         self.maxAcc = 0
         if not config.DATA.MIXUP_ON:
@@ -249,7 +250,7 @@ class gqTrain:
         # print(success_pre, total_pre, positive_pre, total_positive_pre,
         #         negative_pre, total_negative_pre)
         map = ap.compute()
-        return map
+        return map, average_rloss
 
     def save(self, epoch, accuracy):
         dt = datetime.datetime.now().strftime('%H%M')
@@ -285,15 +286,17 @@ class gqTrain:
             if i % 1 == 0:
                 p = self.make_progress('val')
                 with p:
-                    accuracy = self.validate(p=p)
+                    accuracy, rloss = self.validate(p=p)
                 # if accuracy > self.maxAcc or (i + 1) % 10 == 0:
                 self.maxAcc = max(accuracy, self.maxAcc)
                 self.save(self.currentEpoch, accuracy)
                 self.acc_value = np.append(self.acc_value, accuracy.cpu().detach().numpy())
+                self.rloss = np.append(self.rloss, rloss)
                 self.network.train()
                 for p in self.optimizer.param_groups:
                     logging.info('current lr:{}'.format(p['lr']))
                 np.save(os.path.join(self.saveDir, 'acc_value.npy'), self.acc_value)
+                np.save(os.path.join(self.saveDir, 'rloss.npy'), self.rloss)
             self.currentEpoch += 1
 
     def load_check_point(self, save_path):
@@ -450,10 +453,39 @@ class gqTrain:
             total_norm += param_norm.item() ** norm_type if not torch.isnan(param_norm) else 0
         total_norm = total_norm ** (1. / norm_type)
         return total_norm
-
+    
+    def vloss(self, path):
+        print(os.path.join(path, 'config.pth'))
+        model_config = torch.load(os.path.join(path, 'config.pth'))['config']
+        pths = [i for i in os.listdir(path) if i.endswith('.pth')]
+        pths.sort(key=lambda x: (os.path.getmtime(os.path.join(path, x))))
+        rloss = np.zeros(75)
+        for pth in pths:
+            if 'config' in pth: continue
+            print(pth)
+            try:
+                self.network = build_model(model_config).cuda()
+                info = torch.load(
+                        os.path.join(path, pth)
+                    )
+                self.network.load_state_dict(
+                    info['model']
+                )
+                p = self.make_progress('val')
+                with p:
+                    ap, r = self.validate(p=p)
+                rloss[int(info['epoch'])] = r
+            except Exception as e:
+                raise e
+                continue
+        np.save(os.path.join(path, 'rloss.npy'), rloss)
 
 if __name__ == '__main__':
     gqTrain = gqTrain()
     gqTrain.run(epoch=opt.n_epochs)
+    #with torch.no_grad():
+    #    gqTrain.vloss('./train/res23_03_31_00_26_dynamic_gqcnn/')
+    #    gqTrain.vloss('./train/gqcnn23_03_30_16_59_dynamic_gqcnn/')
+    #    gqTrain.vloss('./train/convTrans23_04_02_20_28_dynamic_depth26_attcg_pad/')
 
     #  gqTrain.test_train()

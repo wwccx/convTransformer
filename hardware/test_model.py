@@ -108,20 +108,42 @@ class PredictModel():
         return img
 
     def action(self):
-        t = time.time()
         self.update_tensor()
+        t = time.time()
         pos, angle_idx, z, vel = self.prediction()
         # plt.figure(1)
         # for i in range(6):
         #     plt.subplot(2, 3, i + 1)
         #     x = self.tensor[0, i, :, :].detach().cpu().numpy()
         #     plt.imshow(x)
+        torch.cuda.synchronize()
         print('time:', time.time()-t)
         img = self.tensor[0, 3, :, :].detach().cpu().numpy()
         img = self.plot(img, pos, angle_idx, z, velocity=vel)
         plt.figure(2)
         plt.imshow(img)
         plt.show()
+
+    def record_img(self):
+        T = 15
+        d = np.zeros((T, 480, 640))
+        c = np.zeros((T, 480, 640, 3))
+        for i in range(T):
+            depth, color = self.camera.get_img()
+            depth = in_paint(depth) / 1000.0
+            print(np.min(depth))
+            d[i, ...] = depth
+            c[i, ...] = color
+            plt.subplot(1, 2, 1)
+            plt.imshow(color)
+            plt.subplot(1, 2, 2)
+            plt.imshow(depth)
+            plt.show()
+        np.savez('./data/static_img.npz', d=d, c=c)
+        # depth = depth[100:400, 200:500]
+        # depth = np.clip(depth, 0.48, 0.57)
+
+
 
 
 if __name__ == '__main__':
@@ -138,9 +160,9 @@ if __name__ == '__main__':
     model_path = './train/res23_03_31_00_26_dynamic_gqcnn/'  # resnet backbone
     # model_path = './train/convTrans23_03_31_21_04_dynamic_win3_depth22_nopad_decay005'   # AdamW fixed lr
     # model_path = './train/convTrans23_03_21_16_02_dynamic_win33_depth222_attcg_L1loss_decay005_fixedLr'
-   
-    model_path = './train/convTrans23_04_02_20_28_dynamic_depth26_attcg_pad'  # 26 depth with pad
-
+    model_path = './train/gqcnn23_03_30_16_59_dynamic_gqcnn'
+    #model_path = './train/convTrans23_04_02_20_28_dynamic_depth26_attcg_pad'  # 26 depth with pad
+    
     # static
     # model_path = './train/convTrans22_07_29_20_53_batchnorm_patch8_win5'
     m = PredictModel(model_path, k=-1)
@@ -157,6 +179,7 @@ if __name__ == '__main__':
     res = res.squeeze().view(-1, 16, 2)
     res = torch.nn.Softmax(dim=2)(res)[:, :, 1]
     print('?>', res)
+    # m.record_img()
     while 1:
         m.action()
         # print('???')

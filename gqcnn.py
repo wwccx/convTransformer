@@ -23,7 +23,8 @@ class GQCNN(nn.Module):
 
     def forward(self, img, pose=None):
         if pose is None: pose = torch.zeros(img.shape[0]).cuda()
-
+        if img.shape[0] == 1:
+            img = img.repeat(pose.shape[0], 1, 1, 1).clone()
         img -= pose.squeeze().view(pose.shape[0], 1, 1, 1)
         img = self.layers(img)
         if self.dynamic:

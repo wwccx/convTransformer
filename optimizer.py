@@ -17,7 +17,12 @@ def build_optimizer(config, model):
                                 weight_decay=config.TRAIN.OPTIMIZER.WEIGHT_DECAY)  # 1.25e-4
 
     elif _optim.lower() == 'attcg':
-        optimizer = ATTCG(model.parameters(), lr=config.TRAIN.BASE_LR,
+        skip_keywords = {}
+        if hasattr(model, 'no_weight_decay_keywords'):
+            skip_keywords = model.no_weight_decay_keywords()
+        parameters = set_weight_decay(model, skip_keywords)
+        
+        optimizer = ATTCG(parameters, lr=config.TRAIN.BASE_LR,
                           weight_decay=config.TRAIN.OPTIMIZER.WEIGHT_DECAY)
     else:
         raise NotImplementedError(f"Optimizer {_optim} is not implemented")
