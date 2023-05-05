@@ -1,6 +1,6 @@
 import numpy as np
 import cv2
-import tf.transformations as tftrans
+# import tf.transformations as tftrans
 
 
 def vec2mat(rot_vec, trans_vec):
