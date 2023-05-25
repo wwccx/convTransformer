@@ -153,15 +153,22 @@ class PredictModel():
         # draw x and y axis
         axes2.axhline(y=0, color='k')
         axes2.axvline(x=0, color='k')
-
+        pos_array = np.array([])
         while True:
             pos, angle_idx, z, vel, quality, v_field = self.prediction()
+            pos_array = np.append(pos_array, pos)
             self.grasp_plot(axes1, pos, angle_idx, (0, 0, 1, 1), 36, velocity=vel)
             axes2.plot(vel[0] / 100, vel[1] / 100, 'ro')
             try:
                 self.update_tensor()
             except:
                 break
+        pos_array = pos_array.reshape(-1, 2)
+        print(pos_array)
+        # calculate the variance of the x, y position
+        var_x = np.var(pos_array[:, 0])
+        var_y = np.var(pos_array[:, 1])
+        print('var_x:', var_x, 'var_y:', var_y, 'mean_var:', (var_x + var_y) / 2)
         plt.show()
 
     def action(self):
@@ -230,11 +237,11 @@ if __name__ == '__main__':
     model_path = './train/convTrans23_03_17_13_25_dynamic_win33_depth22_attcg_L2loss_fixedLr_decay005'
     # model_path = './train/convTrans23_03_18_11_53_dynamic_win33_depth22_adamw_L2loss_decay005'
 
-    model_path = './train/dynamic_backbone_comparation/convTrans23_04_02_20_28_dynamic_depth26_attcg_pad'  # my
+    # model_path = './train/dynamic_backbone_comparation/convTrans23_04_02_20_28_dynamic_depth26_attcg_pad'  # my
     # model_path = './train/dynamic_backbone_comparation/res23_03_31_00_26_dynamic_gqcnn'  # res
     # model_path = 'train/dynamic_backbone_comparation/gqcnn23_03_30_16_59_dynamic_gqcnn'  # normal cnn
 
-    # model_path = 'train/convTrans23_02_20_22_53_dynamic'  # adamw my
+    model_path = 'train/convTrans23_02_20_22_53_dynamic'  # adamw my
     # amp 01 yes, patch size 8 yes, BN layer yes
     # static
     # model_path = './train/convTrans22_07_29_20_53_batchnorm_patch8_win5'
@@ -242,7 +249,7 @@ if __name__ == '__main__':
     # m = PredictModel(model_path, k=-1, data_path='./data/img/static_img_headphone.npz')
     # m = PredictModel(model_path, k=-1, data_path='./data/img/dynamic_img_banana1.npz')
 
-    # m.plot_grasp_distribution()
+    m.plot_grasp_distribution()
 
     x = torch.rand(1, 6, 96 + 8 * 8, 96 + 8 * 8).cuda()
     print(m.prediction_model(x)[0][..., 2, 2])

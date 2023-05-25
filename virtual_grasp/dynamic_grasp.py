@@ -49,7 +49,7 @@ class DynamicEnv(VirtualEnvironment):
         self.Tend2cam = np.linalg.inv(self.Tcam2end)
 
         for d, uid in enumerate(self.robotId):
-            self.move_joints(self.get_joints_angle((0, 0, 0.6), self.p.getQuaternionFromEuler((0, 3.1415926535 / 2, 0)),
+            self.move_joints(self.get_joints_angle((0, 0, 0.55), self.p.getQuaternionFromEuler((0, np.pi / 2, 0)),
                                                    -0.5, uid), uid)
 
         time.sleep(1)
@@ -69,12 +69,15 @@ class DynamicEnv(VirtualEnvironment):
         # self.p.changeDynamics(self.obj_idx[0], -1, mass=1, lateralFriction=7,
         #                       restitution=0.98, rollingFriction=5, spinningFriction=5,
         #                       contactStiffness=1e9, contactDamping=5)
+        self.segment = None
 
         time.sleep(3)
 
     def reset_object(self, obj_idx):
         self.p.resetBaseVelocity(obj_idx, [0, 0, 0], [0, 0, 0])
         self.p.resetBasePositionAndOrientation(obj_idx, [0, 0 * self.d, 0.12], self.ori_init)
+
+
 
     def update_camera(self, h=640, w=640, n=0.0001, f=1.5):
         projectionMatrix = (2, 0, 0, 0, 0, 2, 0, 0, 0, 0, -2 / (f - n), 0, 0, 0, -(f + n) / (f - n), 1)
@@ -112,6 +115,7 @@ class DynamicEnv(VirtualEnvironment):
         xp, yp = pixelIndex
         xp = max(0, min(xp, 639 - dx * 2))
         yp = max(0, min(yp, 639 - dy * 2))
+        # print('angle:', angle/np.pi*180)
 
         if depthImage is not None:
             z = depthImage[yp, xp]  # meter
@@ -136,7 +140,7 @@ class DynamicEnv(VirtualEnvironment):
 
         Tobj2cam = np.vstack((
             np.hstack(
-                (np.array(cv2.Rodrigues(np.array([0, 0, -angle], dtype=np.float64))[0]).dot(Rend2cam),
+                (np.array(cv2.Rodrigues(np.array([0, 0, angle], dtype=np.float64))[0]).dot(Rend2cam),
                  Pobj2cam)
             ), np.array([[0, 0, 0, 1]])
         ))
@@ -158,7 +162,7 @@ class DynamicEnv(VirtualEnvironment):
         _, quatObj2Base = p.invertTransform([0, 0, 0], quatObj2Base)
         return quatObj2Base, posObj2Base
 
-    def plot_grasp(self, axes, pos_idx, angle_idx, arrow_color, r, velocity):
+    def plot_grasp(self, axes, pos_idx, angle_idx, arrow_color, r=42, velocity=None):
         x, y = pos_idx
         angle = np.pi / 16 * angle_idx
         x1 = int(r * np.cos(angle))
@@ -218,8 +222,10 @@ class DynamicGrasp():
         self._env.reset_object(self._env.obj_idx[0])
         time.sleep(3)
         self.set_obj_movement(**kwargs)
+        r = []
         for i in range(6):
             color_image, depth_image, position_end, ori_end = self._env.update_camera()
+            r.append(color_image)
             time_step = time.time()
             # depth_image = np.ones((480, 480)) * 0.7
             # depth_image[200:300, 370:400] = 0.65
@@ -250,16 +256,26 @@ class DynamicGrasp():
         self._env.plot_grasp(ax, index[0:2], index[2], (0, 0, 1, 1), 36, velocity=velocity)
         self._env.velocity_field_vis(v_field.cpu().numpy(), ax, (1, 0, 0, 1))
         self._env.quality_vis(quality.cpu().numpy(), ax2, fig)
+        velocity_field_gt_mask = np.zeros((img.shape[2], img.shape[3]))
+        velocity_field_gt_mask[np.where(r[3][..., 2] > 150)] = 1
+        # pooling the mask
+        velocity_field_gt_mask = cv2.resize(velocity_field_gt_mask[48:-48, 48:-48], (v_field.shape[2], v_field.shape[3]))
+        velocity_field_gt_mask = np.where(velocity_field_gt_mask > 0.3, 1, 0)
         time.sleep(2)
-        plt.show()
-        return velocity
+        # plt.show()
+        plt.close('all')
+        return velocity, velocity_field_gt_mask, v_field.squeeze().cpu().numpy()
 
 
     def main_action(self, time_interval=0.1, **kwargs):
         img_tensor = torch.ones(1, 6, 480, 480).cuda()
+        for i in range(10):
+            # warm up GPU
+            self.prediction(img_tensor)
+        pos_obj_init, ori_obj_init = self._env.p.getBasePositionAndOrientation(self._env.obj_idx[0])
         self.set_obj_movement(**kwargs)
         for i in range(6):
-            color_image, depth_image, position_end, ori_end = self._env.update_camera()
+            color_image, depth_image, position_end, ori_end, segment = self._env.update_camera()
             time_step = time.time()
             # depth_image = np.ones((480, 480)) * 0.7
             # depth_image[200:300, 370:400] = 0.65
@@ -268,9 +284,9 @@ class DynamicGrasp():
             while time.time() - time_step < time_interval:
                 pass
         k = 0
+
         while position_end[2] > 0.25:
-            if k > 6: break
-            print(time.time() - time_step)
+            # print(time.time() - time_step)
             while time.time() - time_step < time_interval:
                 pass
             try:
@@ -284,38 +300,31 @@ class DynamicGrasp():
                 img_tensor[:, 0:5, :, :] = img_tensor[:, 1:6, :, :].clone()
                 img_tensor[:, 5, :, :] = depth_tensor
                 if self.prediction_model.dynamic:
-                    quat, pos, index = self.prediction(img_tensor)
+                    quat, pos, index, vel_map, q_map = self.prediction(img_tensor)
                 else:
                     quat, pos, index = self.prediction(img_tensor[:, 0:1, :, :])
-                print('quat:', quat, 'pos:', pos)
-                img = img_tensor.cpu().numpy()
-                res = img[0, 0, :, :]
-                for i in range(5):
-                    res = cv2.addWeighted(res, 0.6, img[0, i, :, :], 1, 0)
-                velocity = index[4] if self.prediction_model.dynamic else None
-                res = self._env.plot_grasp(res, index[0:2], index[2], 1.2, velocity=velocity)
-                # for i in range(6):
-                #     # plt.figure(k)
-                #     # plt.subplot(2, 3, i + 1)
-                #     velocity = index[4] if self.prediction_model.dynamic else None
-                #     if i == 3:
-                #         x = self._env.plot_grasp(img[0, i, :, :], index[0:2], index[2], index[3], velocity=velocity)
-                #         # cv2.imshow('grasp', x)
-                #         # cv2.waitKey(1)
-                #     else:
-                #         x = img[0, i, :, :]
-                #     res = cv2.addWeighted(res, 0.7, x, 1, 0)
-                plt.imshow(res)
-                plt.show()
+                # print('quat:', quat, 'pos:', pos)
+
+                # img = img_tensor.cpu().numpy()
+                # res = img[0, 0, :, :]
+                # for i in range(5):
+                #     res = cv2.addWeighted(res, 0.6, img[0, i, :, :], 1, 0)
+                # velocity = index[4] if self.prediction_model.dynamic else None
+                # fig = plt.figure()
+                # ax = fig.add_subplot(111)
+                # ax.axis('off')
+                # # ax.title.set_text('Velocity Field')
+                # ax.imshow(res)
+                # self._env.plot_grasp(ax, index[0:2], index[2], (0, 0, 1, 1), 36, velocity=velocity)
                 # self.set_obj_movement()
                 # plt.show()
                 # self.set_obj_movement(**kwargs)
 
                 # pos[2] = self._env.init_end_pos[2]
-                # self.move((quat, pos + [0, 0, 0.05]), jaw=1)
+                self.move((quat, pos + [0, 0, 0.05]), jaw=1)
             except KeyboardInterrupt:
                 break
-        plt.show()
+        # plt.show()
         # self.set_obj_movement()
         # self.move((quat, pos + [0, 0, 0.1]), jaw=0.8)
         self.move((quat, pos + [0, 0, 0.05]), jaw=1)
@@ -325,11 +334,39 @@ class DynamicGrasp():
         self.move((quat, pos), jaw=0)
         time.sleep(1)
         self.move((quat, pos + [0, 0, 0.3]), jaw=0)
-        time.sleep(3)
+        time.sleep(0.5)
+        pos_obj, ori_obj = self._env.p.getBasePositionAndOrientation(self._env.obj_idx[0])
+        if pos_obj[2] - pos_obj_init[2] > 0.1:
+            metric = 1
+        else:
+            metric = 0
+        # time.sleep(0.1)
 
         self._env.move_joints(self._env.get_joints_angle((0, 0, 0.6),
                                                          self._env.p.getQuaternionFromEuler((0, 3.14 / 2, 0)),
                                                          -0.5, self._env.robotId[0]), self._env.robotId[0])
+        return metric
+
+    def grasp_objects(self, num_obj=200, num_grasp=100):
+        success = 0
+        total = 0
+        for i in range(num_grasp):
+            time.sleep(1)
+            self._env.p.removeBody(self._env.obj_idx.pop())
+
+            obj_idx = np.random.randint(0, num_obj, 1)[0]
+            urdf, s, z = self._env.generate_urdf(self._env.objects[obj_idx])
+            random_ori = self._env.p.getQuaternionFromEuler((np.random.rand(3) - 0.5) * np.pi * 2)
+            self._env.obj_idx.append(self._env.p.loadURDF(urdf, basePosition=[0., 0, 0.3],
+                                                          baseOrientation=random_ori,
+                                                          globalScaling=s))
+            x, y = np.random.rand(2) * 0.1 - 0.05
+            time.sleep(3)
+            metric = self.main_action(time_interval=0.2, y=y, x=x)
+            total += 1
+            success += metric
+            print('success rate:{:.4f}'.format(success/total), 'success:', success, 'total:', total)
+
 
     def img_transform(self, img, position_end, ori_end):
         Tend = trans_mat_from_quat_pos(ori_end, position_end)  # here, we got Tend2base
@@ -425,7 +462,7 @@ class DynamicGrasp():
         x = index[3] * 8 + 48
         y = index[2] * 8 + 48
         velocity = np.round(-100 * pos[0, :, index[2], index[3]].detach().cpu().numpy()).astype(np.int32)
-        quatObj2Base, posObj2Base = self._env.pixel2base((x + velocity[0], y + velocity[0]), index[1] * np.pi / 16,
+        quatObj2Base, posObj2Base = self._env.pixel2base((x + velocity[0], y + velocity[1]), index[1] * np.pi / 16,
                                                          None,
                                                          z_pose[index[0]].detach().cpu().item(), 80, 80)
         return quatObj2Base, posObj2Base, (x, y, index[1], z_pose_init[index[0]].item(),
@@ -478,11 +515,13 @@ if __name__ == '__main__':
     model_path = './train/dynamic_backbone_comparation/convTrans23_04_01_10_43_dynamic_depth22_attcg_nopad_vloss5'
 
     model_path = './train/dynamic_backbone_comparation/gqcnn23_03_30_16_59_dynamic_gqcnn'
-    # model_path = './train/dynamic_backbone_comparation/res23_03_31_00_26_dynamic_gqcnn'
-    model_path = './train/dynamic_backbone_comparation/convTrans23_04_02_20_28_dynamic_depth26_attcg_pad'
+    model_path = './train/dynamic_backbone_comparation/res23_03_31_00_26_dynamic_gqcnn'
+    # model_path = './train/dynamic_backbone_comparation/convTrans23_04_02_20_28_dynamic_depth26_attcg_pad'
 
     # model_path = './train/convTrans23_03_31_21_04_dynamic_win3_depth22_nopad_decay005_adamw_fixedlr'
     dynamic_grasp = DynamicGrasp(model_path)
+    # dynamic_grasp.grasp_objects(num_obj=200, num_grasp=300)
+    # dynamic_grasp.main_action(time_interval=0.2, y=0.05, x=-0.04)
     # d = VirtualEnvironment(1)
     # d.calibrate_camera()
     # dynamic_grasp.test_img_transform()
@@ -496,19 +535,53 @@ if __name__ == '__main__':
     T = 100
     XY = np.ones((T, 2))
     V = np.ones((T, 2))
+    v_field_gt_mask_list = []
+    v_field_list = []
     for i in range(T):
         x, y = np.random.rand(2) * 0.2 - 0.1
         # x, y = 0.046, -0.052
-        XY[i, :] = [y, x]
-        velocity = dynamic_grasp.test_velocity(time_interval=0.2, y=y, x=x)
-        V[i, :] = -velocity/100
-        print(T, -velocity/100, [y, x])
+        XY[i, :] = [-y, -x]  # world coordinate 2 image coordinate
+        velocity, v_field_gt_mask, v_field = dynamic_grasp.test_velocity(time_interval=0.2, y=y, x=x)
+        v_field_gt_mask_list.append(v_field_gt_mask)
+        v_field_list.append(-v_field)
+        V[i, :] = velocity/100
+        print(i, velocity/100, [-y, -x])
     k_x = np.polyfit(V[:, 0], XY[:, 0], 1)
     k_y = np.polyfit(V[:, 1], XY[:, 1], 1)
     print(k_x, k_y)
-    np.savez(os.path.join('./data', os.path.basename(model_path)+'.npz'), velocity=XY, prediction=V, k_x=k_x, k_y=k_y)
+    np.savez(os.path.join('./data', 'field_mse'+os.path.basename(model_path)+'.npz'), velocity=XY, prediction=V, k_x=k_x, k_y=k_y,
+             v_field_list=v_field_list, v_field_gt_mask_list=v_field_gt_mask_list)
     print('r2_socre_x:', r2_score(XY[:, 0], k_x[0] * V[:, 0] + k_x[1]))
     print('r2_socre_y:', r2_score(XY[:, 1], k_y[0] * V[:, 1] + k_y[1]))
+    mse_list = []
+    for i, (v_field, v_field_gt_mask) in enumerate(zip(v_field_list, v_field_gt_mask_list)):
+        f = plt.figure(1)
+        a = f.add_subplot(1, 1, 1)
+        a.imshow(v_field_gt_mask)
+        v_field_gt = np.zeros_like(v_field)
+        idx = np.where(v_field_gt_mask > 0)
+        v_field_gt[0] = v_field_gt_mask * XY[i, 0]
+        v_field_gt[1] = v_field_gt_mask * XY[i, 1]
+        v_field[0, ...] = v_field[0, ...] * k_x[0] + k_x[1]
+        v_field[1, ...] = v_field[1, ...] * k_y[0] + k_y[1]
+
+        # visualize field
+        # fig = plt.figure(2)
+        # ax = fig.add_subplot(221)
+        # ax.imshow(v_field[0, ...])
+        # ax = fig.add_subplot(222)
+        # ax.imshow(v_field[1, ...])
+        # ax = fig.add_subplot(223)
+        # ax.imshow(v_field_gt[0, ...])
+        # ax = fig.add_subplot(224)
+        # ax.imshow(v_field_gt[1, ...])
+        # plt.show()
+
+        x = np.mean(np.abs(v_field - v_field_gt))
+        print('mse:', x)
+        mse_list.append(x)
+    print('mean mse:', np.mean(mse_list))
+
 
 
 

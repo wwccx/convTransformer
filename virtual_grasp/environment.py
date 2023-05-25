@@ -128,7 +128,7 @@ class VirtualEnvironment(object):
         iMat = obj.moment_inertia
         cMass = obj.center_mass
 
-        scale = 0.08 / np.abs(obj.bounding_box.bounds).mean()
+        scale = 0.06 / np.abs(obj.bounding_box.bounds).mean()
         z_pos = np.max(obj.bounding_box.bounds)
         if not os.path.exists(obj_file.replace('.obj', '.urdf')):
             text = f"""
