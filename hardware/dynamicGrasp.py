@@ -27,9 +27,12 @@ class RealEnvironment():
         self.robot = VelController(self.pose_queue)
         self.robot.setDaemon(True)
         self.robot.start()
-        self.move_joints(*self.robot.aim_pose_init, jaw=1, block=True)
+        self.move_joints(*self.robot.aim_pose_init, jaw=1)
         # self.robot.join()
-        self.camera_intrinsics = np.array([[614.887, 0.0, 328.328], [0.0, 614.995, 236.137], [0.0, 0.0, 1.0]])
+        img_scale = 0.625
+        self.camera_intrinsics = np.array([[614.887 * img_scale, 0.0, 328.328 * img_scale],
+                                           [0.0, 614.995 * img_scale, 236.137 * img_scale],
+                                           [0.0, 0.0, 1.0]])
 
         self.init_end_pos, self.init_end_ori = self.robot.aim_pose_init
         self.Tcam2end = np.array([
@@ -40,12 +43,15 @@ class RealEnvironment():
         ])
         self.Tend2cam = np.linalg.inv(self.Tcam2end)
         self.Rend2cam = self.Tend2cam[0:3, 0:3]
+        self.img_width = int(640 * img_scale)
+        self.img_height = int(480 * img_scale)
 
     def update_camera(self):
         depth, rgb = self.camera.get_img()
         pos, ori = self.robot.get_current_tool_pose()  # x y z, rotMat \in \mathbb{R}^{3 \times 3}
         depth = u.in_paint(depth)
         depth /= 1000
+        depth = cv2.resize(depth, (self.img_width, self.img_height))
         # plt.figure(3)
         # plt.imshow(depth)
         # depth = np.clip(depth, 0.48, float('inf'))
@@ -70,14 +76,14 @@ class RealEnvironment():
 
     def move_joints(self, pos, ori, block=False, jaw=None):
         # print(pos)
-        pos[2] = max(0.033, pos[2])
+        pos[2] = max(0.015, pos[2])
         self.pose_queue.put((pos, ori))
         if jaw is not None:
             self.gripper.gripper_position(int(100*jaw))
         if block:
             while not self.robot.reach_target:
                 try:
-                    print('wait until robot reaches target')
+                    # print('wait until robot reaches target')
                     pass
                 except:
                     break
@@ -137,7 +143,7 @@ class DynamicGrasp:
         self.prediction_model.to('cuda')
     
         self._env = RealEnvironment()
-        self.img_tensor = torch.ones(1, 6, 480, 640).cuda()
+        self.img_tensor = torch.ones(1, 6, self._env.img_height, self._env.img_width).cuda()
         self.robot_pos = self._env.init_end_pos
         self.img_time = time.time()
 
@@ -166,7 +172,8 @@ class DynamicGrasp:
         # plt.figure(2)
         # plt.imshow(img)
         # plt.title('original')
-        img = cv2.warpPerspective(img, MP, img.shape[::-1], borderMode=cv2.BORDER_REPLICATE)
+        img = cv2.warpPerspective(img, MP, img.shape[::-1], borderMode=cv2.BORDER_CONSTANT,
+                                  borderValue=0.57 + position_end[2] - self._env.init_end_pos[2])
         # plt.figure(3)
         # plt.imshow(img)
         # plt.title('warped')
@@ -184,20 +191,28 @@ class DynamicGrasp:
             return img, color
     
     def update_tensor(self):
+        # end = 0.35
+        # slope = np.arange(0, end, 640)
         color_image, depth_image, position_end, ori_end = self._env.update_camera()
+        slope_mask = np.zeros_like(depth_image)
+        # slope_mask[:] = slope
         self.img_time = time.time()
         depth_image = self.img_transform(depth_image, position_end, ori_end)
         depth_image = np.clip(depth_image, 0.48, 0.57)
+        # depth_image[np.where(depth_image > 0.569)] = 0.60
+        # depth_image += slope_mask
         depth_tensor = torch.from_numpy(depth_image).unsqueeze(0).unsqueeze(0).cuda()
         self.robot_pos = position_end
         self.img_tensor[:, 0:5, :, :] = self.img_tensor[:, 1:6, :, :].clone()
         self.img_tensor[:, 5, :, :] = depth_tensor
 
-    def normalize_tensor(self, depth_bin=8, depth_reso=1e-2):
+    def normalize_tensor(self, depth_bin=8, depth_reso=5e-3):
         img_tensor = self.img_tensor
         z_pose_init = torch.arange(depth_bin).cuda() * depth_reso + torch.min(img_tensor)
-        img_tensor = (img_tensor - torch.min(img_tensor)) / (torch.max(img_tensor) - torch.min(img_tensor)) - 0.5
-        z_pose = (z_pose_init - torch.min(img_tensor)) / (torch.max(img_tensor) - torch.min(img_tensor)) - 0.5
+        # img_tensor = (img_tensor - torch.min(img_tensor)) / (torch.max(img_tensor) - torch.min(img_tensor)) - 0.5
+        # z_pose = (z_pose_init - torch.min(img_tensor)) / (torch.max(img_tensor) - torch.min(img_tensor)) - 0.5
+        img_tensor = (img_tensor - torch.mean(img_tensor)) / torch.std(img_tensor)
+        z_pose = (z_pose_init - torch.mean(img_tensor)) / torch.std(img_tensor)
         
         return img_tensor, z_pose, z_pose_init
 
@@ -268,7 +283,7 @@ class DynamicGrasp:
                 pass
         final_pos, final_ori = self._env.init_end_pos, self._env.init_end_ori
         k = 1
-        while self.robot_pos[2] > 0.25:
+        while self.robot_pos[2] > 0.15:
             while time.time() - self.img_time < step:
                 pass
             try:
@@ -279,7 +294,7 @@ class DynamicGrasp:
                 angle = -index[2] * np.pi / 16
                 if angle < -np.pi / 2:
                     angle += np.pi
-                pos_bias_better_campos = np.array([0.12*np.sin(angle), -0.12*np.cos(angle), 0.0])
+                pos_bias_better_campos = np.array([0.12*np.sin(angle), -0.12*np.cos(angle), 0.0]) * 0
                 print('bias:', pos_bias_better_campos, angle/np.pi * 180)
                 img = self.img_tensor.cpu().numpy()
                 for i in range(6):
@@ -299,23 +314,24 @@ class DynamicGrasp:
                 # plt.show()
                 # self._env.robot.continue_listen()
 
-                self._env.move_joints(pos + pos_bias_better_campos, ori, jaw=0.8)
+                self._env.move_joints(pos + pos_bias_better_campos, ori, jaw=1)
             except KeyboardInterrupt:
                 break
             # finally:
             #     break
         # plt.show()
-        final_pos -= [0, 0, 0.10]
-        self._env.move_joints(final_pos + [0, 0, 0.10], final_ori, jaw=0.8)
-        time.sleep(0.5)
-        self._env.move_joints(final_pos, final_ori, jaw=0.8)
-        time.sleep(0.5)
-        self._env.move_joints(final_pos, final_ori, jaw=0)
-        time.sleep(0.5)
-        self._env.move_joints(final_pos + [0, 0, 0.25], final_ori)
-        time.sleep(0.5)
+        final_pos -= [0, 0, 0.12]
+        t = 0.3
+        # self._env.move_joints(final_pos + [0, 0, 0.10], final_ori, jaw=1, block=True)
+        # time.sleep(t)
+        self._env.move_joints(final_pos, final_ori, jaw=1, block=True)
+        time.sleep(t)
+        self._env.move_joints(final_pos, final_ori, jaw=0, block=True)
+        time.sleep(t)
+        self._env.move_joints(final_pos + [0, 0, 0.25], final_ori, block=True)
+        time.sleep(t+1)
 
-        self._env.move_joints(*self._env.robot.aim_pose_init, jaw=1)
+        self._env.move_joints(*self._env.robot.aim_pose_init, jaw=1, block=True)
 
 
 if __name__ == '__main__':
@@ -324,16 +340,20 @@ if __name__ == '__main__':
     # plt.imsave('./data/p_test/hmm.png', x)
     # model_path = './train/convTrans23_02_21_18_52_dynamic_attcg_removebn'
     # model_path = './train/convTrans23_03_12_19_47_dynamic_attcg_allBN_win3'
-    model_path = './train/convTrans23_03_17_13_25_dynamic_win33_depth22_attcg_L2loss_fixedLr_decay005'
+    model_path = './train/convTrans23_04_02_20_28_dynamic_depth26_attcg_pad'
+    # model_path = './train/convTrans23_04_05_02_00_dynamic_depth226_attcg_pad'
     # model_path = './train/convTrans23_03_17_11_56_dynamic_win33_depth22_attcg_L2loss_fixedLr'
     # model_path = './train/convTrans23_03_18_23_38_dynamic_win3_depth24_nopad_decay005'
     # model_path =  './train/convTrans23_02_11_18_11_attcg-grasp'
     dynamic_grasp = DynamicGrasp(model_path)
     # time.sleep(5)
     # dynamic_grasp.test_img_transform()
-    dynamic_grasp.main_action()
+    # plt.show()
+    dynamic_grasp.main_action(step=0.1)
 
     # dynamic_grasp._env.move_joints(pos, ori)
-    time.sleep(5)
-    # dynamic_grasp._env.move_joints(*dynamic_grasp._env.robot.aim_pose_init)
+    # time.sleep(5)
+    dynamic_grasp._env.move_joints(*dynamic_grasp._env.robot.aim_pose_init)
+    time.sleep(2)
     dynamic_grasp._env.robot.end_listen()
+    dynamic_grasp._env.robot._end_joint_rotation()

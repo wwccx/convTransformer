@@ -5,6 +5,8 @@ import pyrealsense2 as rs
 from matplotlib import pyplot as plt
 import numpy as np
 import time
+import datetime
+import os
 
 
 class RS():
@@ -40,10 +42,10 @@ class RS():
             ])
 
         # 跳过启动时的绿屏
-        # depth_image, color_image = self.get_img()
+        depth_image, color_image = self.get_img()
         # imshow('start', color_image)
         # waitKey(1000)
-        # time.sleep(1)
+        time.sleep(1)
         # destroyAllWindows()
 
     def get_img(self):
@@ -83,9 +85,38 @@ class RS():
 
 if __name__ == '__main__':
     import cv2
-    rs = RS(640, 480)
-    d, c = rs.get_img()
-    cv2.imwrite('c.png', c)
+    # dt = datetime.datetime.now().strftime('%y%m%d_%H%M')
+    # net_desc = 'real_data_{}'.format(dt)
+    data_save = '/home/server/grasp_jq/virtual_grasp/real_data2'
+    if not os.path.exists(data_save):
+        os.makedirs(data_save)
+    rs =RS(640, 480)
+    while 1:
+        depth_img, color_img = rs.get_img()
+        # color_img = color_img[:, 80:560, :]
+        # depth_img = depth_img[:, 80:560]
+        depth_img = np.array(depth_img).astype(np.float32)
+        depth_img = cv2.copyMakeBorder(depth_img, 1, 1, 1, 1, cv2.BORDER_DEFAULT)
+        mask = (depth_img < 0.1).astype(np.uint8)
+
+        depth_img = depth_img.astype(np.float32)  # Has to be float32, 64 not supported.
+        depth_img = cv2.inpaint(depth_img, mask, 1, cv2.INPAINT_NS)
+        # # Back to original size and value range.
+        depth_img = depth_img[1:-1, 1:-1]
+        depth_img = cv2.GaussianBlur(depth_img, (3, 3), 0) / 1000
+        f = plt.figure()
+        ax1 = f.add_subplot(121)
+        ax1.imshow(depth_img)
+        ax2 = f.add_subplot(122)
+        ax2.imshow(color_img)
+        plt.show()
+    # c = cv2.cvtColor(c, cv2.COLOR_BGR2RGB)
+
+    # cv2.imwrite(os.path.join(data_save, "50.png"),
+    #             color_img)
+    # cv2.imwrite(os.path.join(data_save, "50d.tiff"),
+    #             depth_img)
+    # cv2.imwrite('c.png', c)
     # d, c = rs.get_img()
     # # import numpy as np
     # # print(np.max(d), np.min(d))

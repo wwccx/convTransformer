@@ -1,7 +1,10 @@
 import serial
 
-# sudo chmod 777 /dev/ttyACM0
+'''
+if you want to control the gripper, open the gripper, and then run the following code in the terminal first:
 
+sudo chmod 777 /dev/ttyACM0
+'''
 
 class Gripper():
     def __init__(self):
@@ -44,7 +47,7 @@ class Gripper():
     def get_position(self):
         s = 'FFFEFDFC0106020000' + '00' + '000000FB'
         self.ser.write(s.encode())
-        print(self.ser.read(42))
+        return self.ser.read(42)
 
     def check_grasp(self):
         s = 'FFFEFDFC010F01000000000000FB'
@@ -62,11 +65,12 @@ class Gripper():
 if __name__ == '__main__':
     import time
     g = Gripper()
-    # g.gripper_initial()
+    g.gripper_initial()
     # time.sleep(4)
     # print('???')
     # print(g.get_position())
-    g.gripper_position(100)
+
+    # g.gripper_position(100)
     # print(g.check_grasp())
     # g = Gripper()
     # g.gripper_initial()

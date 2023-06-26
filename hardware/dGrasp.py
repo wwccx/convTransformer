@@ -233,29 +233,29 @@ class Grasp:
         depth_img = depth_img[:, 80:560]
         color_img = color_img[:, 80:560, :]
 
-        depth_img = self.in_paint(depth_img)
-        depth_img = cv2.GaussianBlur(depth_img, (3, 3), 0)/1000
-
-        img_in = self.to_tensor(depth_img, color_img)
-
-        g, p, q = self.ggsnet(img_in, depth_img, imageSize=140)
+        # depth_img = self.in_paint(depth_img)
+        # depth_img = cv2.GaussianBlur(depth_img, (3, 3), 0)/1000
+        #
+        # img_in = self.to_tensor(depth_img, color_img)
+        #
+        # g, p, q = self.ggsnet(img_in, depth_img, imageSize=140)
         # for i in range(len(g)):
         #     g[i] = g[i].cpu().detach().numpy()
         # p = float(p.cpu().detach().numpy())
 
-        coordinate, width_gripper, angle = self.grasp_img2real(
-            color_img, depth_img, g, vis=vis, color=(0, 255, 255), collision_check=True,
-            depth_offset=p
-        )
+        # coordinate, width_gripper, angle = self.grasp_img2real(
+        #     color_img, depth_img, g, vis=vis, color=(0, 255, 255), collision_check=True,
+        #     depth_offset=p
+        # )
         key = cv2.waitKey(0)
-        position, orientation = self.get_target(coordinate, angle)
+        # position, orientation = self.get_target(coordinate, angle)
 
-        self.move2Target(position, orientation)
-        # if key & 0xFF == ord('q'):  # 按下q键则不进行此次抓取重新预测，按下其他键则进行抓取
-        #     return 0
-        # elif key & 0xFF == ord('s'):
-        #     name = input()
-        #     cv2.imwrite('/home/wangchuxuan/pic_grasp/'+name+'.png', color_img)
+        # self.move2Target(position, orientation)
+        if key & 0xFF == ord('q'):  # 按下q键则不进行此次抓取重新预测，按下其他键则进行抓取
+            return 0
+        elif key & 0xFF == ord('s'):
+            name = input()
+            cv2.imwrite('/home/wangchuxuan/pic_grasp/'+name+'.png', color_img)
         # # coordinate[2] = self.init_pose[2] + 0.1228
         # if self.hardware:
         #     mat = cv2.Rodrigues(np.array([0, 0, -angle]).astype(np.float32))[0]
@@ -425,16 +425,16 @@ if __name__ == '__main__':
     a = 1
     grasp = Grasp(hardware=True)
     # grasp.dynamic_action()
-    pose = grasp.group.get_current_pose().pose
-    position_tool = np.array([[pose.position.x], [pose.position.y], [pose.position.z]])
-    orientation_tool = np.array([pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w])
-    print(position_tool, orientation_tool)
-    grasp.move2Target([0.4, 0, 0.6], tftrans.euler_from_quaternion(orientation_tool))
+    # pose = grasp.group.get_current_pose().pose
+    # position_tool = np.array([[pose.position.x], [pose.position.y], [pose.position.z]])
+    # orientation_tool = np.array([pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w])
+    # print(position_tool, orientation_tool)
+    # grasp.move2Target([0.4, 0, 0.6], tftrans.euler_from_quaternion(orientation_tool))
     # grasp.move2Target(np.array([0.4, 0, 0.75]), np.array([-2.573, 0.468, -1.258]))
     # grasp.action(vis=True)
-    # while 1:
-    #     # grasp.action(vis=True)
-    #     # torch.cuda.empty_cache()
+    while 1:
+        grasp.action(vis=True)
+        torch.cuda.empty_cache()
     #     # pass
     #     Grasp.move2Target()
     #     time.sleep(2)

@@ -13,7 +13,7 @@ from queue import Empty
 
 
 class PID():
-    def __init__(self, p, i, d, time_step=1e-2, max_v=1) -> None:
+    def __init__(self, p, i, d, time_step=5e-2, max_v=0.4) -> None:
         self.p = p
         self.i = i
         self.d = d
@@ -84,8 +84,9 @@ class VelController(Thread):
             [0, 0, 1, 0],
             [0, 0, 0, 1],
             ])
-        self.pos_pid = PID(5, 1, 0.1, time_step=time_step)
-        self.ori_pid = PID(5, 1, 0.1, time_step=time_step, max_v=2)
+        v = 0.8
+        self.pos_pid = PID(5, 1, 0.1, time_step=time_step, max_v=v)
+        self.ori_pid = PID(5, 1, 0.1, time_step=time_step, max_v=v*2)
 
     def get_current_end_pose(self):
         
@@ -240,7 +241,7 @@ class VelController(Thread):
                 current_tool_pos, current_tool_ori = self.get_current_tool_pose()
                 epos = np.linalg.norm(self.aim_pose[0] - current_tool_pos, 2) ** 0.5
                 eori = np.linalg.norm(current_tool_ori - self.aim_pose[1], 2) ** 0.5
-                if epos < 1e-2 and eori < 2e-2:
+                if epos < 5e-2 and eori < 1e-1:
                     self._end_joint_rotation()
                     self.reach_target = True
                 else:
